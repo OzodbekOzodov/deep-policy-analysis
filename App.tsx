@@ -79,7 +79,7 @@ function App() {
 
       // 1. Create Analysis via Real API
       const { id } = await createAnalysis({ query: searchQuery });
-      if (isMounted.current) addLog('NEXUS', 'JOB_CREATED', `ID: ${id.substring(0, 8)}`, 'scanning');
+      if (isMounted.current) addLog('DPA', 'JOB_CREATED', `ID: ${id.substring(0, 8)}`, 'scanning');
 
       // 2. Poll for completion
       await pollUntilComplete(id, (status, stage) => {

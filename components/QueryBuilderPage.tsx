@@ -31,10 +31,10 @@ const QueryBuilderPage: React.FC<QueryBuilderPageProps> = ({ onStart, history })
     // Animation values
     const [activeValueProp, setActiveValueProp] = useState(0);
     const valueProps = [
-        "Map complex relationships across 100s of sources",
-        "Extract Actors, Policies, Outcomes & Risks",
-        "Multi-agent reasoning with full transparency",
-        "Trace every claim to source evidence"
+        "Maap complex relationships across 100s of sources",
+        "Exxtract Actors, Policies, Outcomes & Risks",
+        "Muulti-agent reasoning with full transparency",
+        "Trrace every claim to source evidence"
     ];
 
     useEffect(() => {
