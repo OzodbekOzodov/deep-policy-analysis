@@ -9,10 +9,10 @@ from sqlalchemy import select, func
 
 from app.api.deps import get_db
 from app.models.schemas import (
-    GraphResponse, 
-    EntityResponse, 
-    RelationshipResponse, 
-    ProvenanceResponse
+    GraphResponse,
+    EntityResponse,
+    RelationshipResponse,
+    ProvenanceItem
 )
 from app.models.database import (
     AnalysisJob,
@@ -63,14 +63,17 @@ async def get_graph(
             id=entity.id,
             type=entity.entity_type,
             label=entity.label,
-            confidence=entity.confidence,
-            impact_score=entity.impact_score,
+            confidence=entity.confidence or 50,
+            impact_score=entity.impact_score or 50,
             summary=entity.summary,
+            aliases=entity.aliases or [],
+            first_seen=entity.first_seen,
+            last_seen=entity.last_seen,
             provenance=[
-                ProvenanceResponse(
+                ProvenanceItem(
                     chunk_id=p.chunk_id,
                     quote=p.quote,
-                    confidence=p.confidence
+                    confidence=p.confidence or 50
                 )
                 for p in provenances
             ]
@@ -106,8 +109,5 @@ async def get_graph(
         nodes=nodes,
         links=links,
         version=version,
-        summary=analysis.summary,
-        projected_gdp=analysis.projected_gdp,
-        social_stability=analysis.social_stability,
-        timeline_labels=analysis.timeline_labels
+        analysis_id=analysis_id
     )

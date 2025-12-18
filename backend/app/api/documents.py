@@ -17,7 +17,7 @@ from app.services.ingestion import ChunkingService
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
 
-@router.post("", response_model=DocumentResponse)
+@router.post("/", response_model=DocumentResponse)
 async def upload_document(
     request: UploadDocumentRequest,
     analysis_id: Optional[UUID] = None,
@@ -53,7 +53,7 @@ async def upload_document(
         title=request.title or "Untitled Document",
         content_type=request.content_type,
         raw_content=request.content,
-        doc_metadata={}
+        meta_data=request.metadata or {}
     )
     db.add(document)
     await db.flush()
