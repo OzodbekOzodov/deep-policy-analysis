@@ -28,7 +28,7 @@ router = APIRouter(prefix="/api/analysis", tags=["analysis"])
 _background_tasks: dict[UUID, asyncio.Task] = {}
 
 
-@router.post("", response_model=AnalysisResponse)
+@router.post("/", response_model=AnalysisResponse)
 async def create_analysis(
     request: CreateAnalysisRequest,
     background_tasks: BackgroundTasks,
@@ -88,6 +88,7 @@ async def create_analysis(
         id=analysis.id,
         query=analysis.query,
         status=analysis.status,
+        depth=analysis.depth or "standard",
         current_stage=analysis.current_stage,
         progress=AnalysisProgress(
             stage=analysis.current_stage or "created",
@@ -170,6 +171,7 @@ async def get_analysis(
         id=analysis.id,
         query=analysis.query,
         status=analysis.status,
+        depth=analysis.depth or "standard",
         current_stage=analysis.current_stage,
         progress=AnalysisProgress(
             stage=analysis.current_stage or "unknown",
@@ -181,7 +183,8 @@ async def get_analysis(
                 risks=counts.get("risks", 0)
             )
         ),
-        created_at=analysis.created_at
+        created_at=analysis.created_at,
+        completed_at=analysis.completed_at
     )
 
 
@@ -210,7 +213,36 @@ async def get_checkpoints(
     ]
 
 
-def _stage_to_percent(stage: str | None) -> int:
+@router.get("/{analysis_id}/report")
+async def get_analysis_report(
+    analysis_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get analysis report (stub)."""
+    analysis = await db.get(AnalysisJob, analysis_id)
+    if not analysis:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+
+    # Stub: Return placeholder report structure
+    return {"status": "not_generated", "analysis_id": str(analysis_id)}
+
+
+@router.delete("/{analysis_id}", status_code=204)
+async def delete_analysis(
+    analysis_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Delete an analysis job and all related data."""
+    analysis = await db.get(AnalysisJob, analysis_id)
+    if not analysis:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+
+    await db.delete(analysis)
+    await db.commit()
+    return None
+
+
+def _stage_to_percent(stage: Optional[str]) -> int:
     """Convert stage name to approximate completion percentage."""
     stage_percents = {
         "created": 0,

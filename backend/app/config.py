@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
     
     # Database
-    database_url: str = "postgresql+asyncpg://dap:dap@localhost:5432/dap"
+    database_url: str = "postgresql+asyncpg://localhost/dap"
     
     # LLM Configuration (Generic - works with any OpenAI-compatible API)
     llm_base_url: str = "https://generativelanguage.googleapis.com/v1beta"

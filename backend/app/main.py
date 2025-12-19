@@ -1,10 +1,13 @@
 """DAP Backend - FastAPI Application"""
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
 
-from app.api import analysis, documents, graph, sse
+from app.api import analysis, documents, graph, sse, knowledge
+from app.api.deps import get_db
 
 app = FastAPI(
     title="DAP API",
@@ -30,6 +33,7 @@ app.include_router(analysis.router)
 app.include_router(documents.router)
 app.include_router(graph.router)
 app.include_router(sse.router)
+app.include_router(knowledge.router)
 
 
 @app.get("/", include_in_schema=False)
@@ -38,6 +42,21 @@ async def root():
 
 
 @app.get("/health")
-async def health_check():
-    """Health check endpoint."""
-    return {"status": "ok"}
+async def health_check(db: AsyncSession = Depends(get_db)):
+    """
+    Health check endpoint.
+
+    Verifies API is running and database connection is working.
+    """
+    database_status = "connected"
+
+    try:
+        # Try to execute a simple query to verify DB connection
+        await db.execute(text("SELECT 1"))
+    except Exception as e:
+        database_status = f"error: {str(e)}"
+
+    return {
+        "status": "ok",
+        "database": database_status
+    }

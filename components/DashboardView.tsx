@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useMemo } from 'react';
 import {
     Activity,
     Cpu,
@@ -13,9 +13,9 @@ import {
     RefreshCw
 } from 'lucide-react';
 import NetworkGraph from './NetworkGraph';
-import SimulationCharts from './SimulationCharts';
 import DataTerminal from './DataTerminal';
 import EntityDetailPanel from './EntityDetailPanel';
+import ReasoningLog, { ReasoningStep } from './ReasoningLog'; // Import the new component
 import { SimulationData, AgentLog, AnalysisState, PolicyNode } from '../types';
 
 interface DashboardViewProps {
@@ -72,6 +72,67 @@ const DashboardView: React.FC<DashboardViewProps> = ({
         setSelectedNode(null);
     };
 
+    // --- Reasoning Steps Logic ---
+    const reasoningSteps = useMemo(() => {
+        // Base steps that always exist in the 'process'
+        const baseSteps: ReasoningStep[] = [
+            { id: 'init', message: 'Initializing Policy Engine...', status: 'complete', timestamp: '00:00:01' },
+        ];
+
+        // Dynamic State Steps
+        if (state === AnalysisState.INGESTING) {
+            baseSteps.push(
+                { id: 'ingest', message: 'Ingesting data sources...', status: 'loading' }
+            );
+        } else if (state === AnalysisState.CONNECTING || state === AnalysisState.SIMULATING || state === AnalysisState.COMPLETE) {
+            baseSteps.push(
+                { id: 'ingest', message: 'Data sources validated', status: 'complete', timestamp: '00:00:15' }
+            );
+        }
+
+        if (state === AnalysisState.CONNECTING) {
+            baseSteps.push(
+                { id: 'connect', message: 'Mapping entity relationships...', status: 'loading' }
+            );
+        } else if (state === AnalysisState.SIMULATING || state === AnalysisState.COMPLETE) {
+            baseSteps.push(
+                { id: 'connect', message: 'Knowledge graph built', status: 'complete', timestamp: '00:00:42' }
+            );
+        }
+
+        if (state === AnalysisState.SIMULATING) {
+            baseSteps.push(
+                { id: 'sim', message: 'Running predictive models...', status: 'loading' }
+            );
+        } else if (state === AnalysisState.COMPLETE) {
+            baseSteps.push(
+                { id: 'sim', message: 'Simulation complete', status: 'complete', timestamp: '00:01:12' },
+                { id: 'syn', message: 'Synthesizing final report', status: 'complete', timestamp: '00:01:15' }
+            );
+        }
+
+        // Interleave interesting logs as 'steps' if they are unique enough
+        // For simplicity, we just append a few dynamic ones from the logs if needed, 
+        // but the user wants a cleaner view. Let's stick to the high-level state steps + maybe 1-2 latest logs if active.
+
+        // Actually, let's map the specific "logs" to steps if they are substantial 
+        // effectively creating a hybrid view.
+
+        const logSteps: ReasoningStep[] = logs.slice(-5).map(log => ({
+            id: log.id,
+            message: `${log.agentName}: ${log.action} ${log.target ? `on ${log.target}` : ''}`,
+            status: log.status === 'idle' ? 'complete' : (log.status === 'scanning' || log.status === 'connecting' || log.status === 'simulating' ? 'loading' : 'complete'),
+            timestamp: log.timestamp
+        }));
+
+        // Combine for a rich feel, but keep it clean.
+        // If we are in IDLE, just show initialized.
+        if (state === AnalysisState.IDLE) return baseSteps;
+
+        return [...baseSteps, ...logSteps];
+    }, [state, logs]);
+
+
     return (
         <div className="flex h-screen w-screen bg-nexus-950 text-slate-200 overflow-hidden font-sans selection:bg-nexus-500 selection:text-white">
 
@@ -121,28 +182,43 @@ const DashboardView: React.FC<DashboardViewProps> = ({
                     </button>
                 </div>
 
-                {/* Active Agents List */}
-                <div className="flex-1 overflow-y-auto p-4 space-y-2 custom-scrollbar">
-                    <h2 className="text-xs font-mono text-slate-500 uppercase tracking-widest mb-4">Active Agents</h2>
+                {/* Active Agents List - ALIGNED */}
+                <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+                    <h2 className="text-xs font-mono text-slate-500 uppercase tracking-widest mb-4 border-b border-nexus-800 pb-2">Active Agents</h2>
 
-                    {[
-                        { name: 'ECON_MODEL_X', icon: Database, color: 'text-emerald-400' },
-                        { name: 'SOC_SENTIMENT', icon: Globe, color: 'text-blue-400' },
-                        { name: 'RISK_ASSESSOR', icon: ShieldAlert, color: 'text-amber-500' },
-                        { name: 'POLICY_TRACER', icon: Share2, color: 'text-purple-400' },
-                    ].map((agent, i) => (
-                        <div key={i} className="flex items-center gap-3 p-3 rounded bg-nexus-900/50 border border-nexus-800/50 hover:bg-nexus-900 transition-colors">
-                            <agent.icon className={`w-4 h-4 ${agent.color}`} />
-                            <div className="flex-1">
-                                <div className="text-xs font-mono font-bold text-slate-300">{agent.name}</div>
-                                <div className="text-[10px] text-slate-500 flex items-center gap-1">
-                                    <span className={`w-1.5 h-1.5 rounded-full ${state === AnalysisState.IDLE || state === AnalysisState.COMPLETE ? 'bg-slate-600' : 'bg-green-500 animate-pulse'}`}></span>
-                                    {state === AnalysisState.IDLE || state === AnalysisState.COMPLETE ? 'STANDBY' : 'PROCESSING'}
+                    <div className="space-y-1">
+                        {[
+                            { name: 'ECON_MODEL_X', icon: Database, color: 'text-emerald-400', ver: 'v2.0' },
+                            { name: 'SOC_SENTIMENT', icon: Globe, color: 'text-blue-400', ver: 'v3.0' },
+                            { name: 'RISK_ASSESSOR', icon: ShieldAlert, color: 'text-amber-500', ver: 'v4.0' },
+                            { name: 'POLICY_TRACER', icon: Share2, color: 'text-purple-400', ver: 'v1.5' },
+                        ].map((agent, i) => (
+                            <div key={i} className="group flex items-center h-12 px-3 rounded bg-nexus-900/30 border border-transparent hover:border-nexus-700 hover:bg-nexus-900 transition-all">
+                                {/* Icon Column */}
+                                <div className="w-8 flex items-center justify-start">
+                                    <agent.icon className={`w-4 h-4 ${agent.color} opacity-70 group-hover:opacity-100 transition-opacity`} />
+                                </div>
+
+                                {/* Name & Status Column */}
+                                <div className="flex-1 flex flex-col justify-center">
+                                    <div className="text-xs font-mono font-bold text-slate-300 group-hover:text-white transition-colors">
+                                        {agent.name}
+                                    </div>
+                                    <div className="flex items-center gap-1.5 mt-0.5">
+                                        <div className={`w-1 h-1 rounded-full ${state === AnalysisState.IDLE || state === AnalysisState.COMPLETE ? 'bg-slate-600' : 'bg-green-500 animate-pulse'}`}></div>
+                                        <span className="text-[9px] text-slate-500 font-mono">
+                                            {state === AnalysisState.IDLE || state === AnalysisState.COMPLETE ? 'STANDBY' : 'ACTIVE'}
+                                        </span>
+                                    </div>
+                                </div>
+
+                                {/* Version Column */}
+                                <div className="text-[10px] font-mono text-slate-600 group-hover:text-nexus-400 transition-colors">
+                                    {agent.ver}
                                 </div>
                             </div>
-                            <div className="text-[10px] font-mono text-slate-600">v{2 + i}.0</div>
-                        </div>
-                    ))}
+                        ))}
+                    </div>
                 </div>
 
                 {/* System Status Footer */}
@@ -213,8 +289,9 @@ const DashboardView: React.FC<DashboardViewProps> = ({
                             <EntityDetailPanel node={selectedNode} onClose={closeDetailPanel} />
                         ) : (
                             <>
+                                {/* REASONING LOG (Replaces SimulationCharts) */}
                                 <div className="h-1/2 p-4 border-b border-nexus-800">
-                                    <SimulationCharts data={simulationData} />
+                                    <ReasoningLog steps={reasoningSteps} />
                                 </div>
                                 <div className="h-1/2">
                                     <DataTerminal logs={logs} />

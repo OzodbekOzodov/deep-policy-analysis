@@ -2,7 +2,7 @@
 
 from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
-from app.config import get_settings
+from app.config import Settings, get_settings
 
 settings = get_settings()
 
@@ -17,3 +17,8 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """Get database session."""
     async with async_session_maker() as session:
         yield session
+
+
+def get_current_settings() -> Settings:
+    """Get current settings instance."""
+    return get_settings()
