@@ -22,3 +22,13 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 def get_current_settings() -> Settings:
     """Get current settings instance."""
     return get_settings()
+
+# Client dependencies
+from app.clients.llm import LLMClient, EmbeddingClient
+
+def get_llm_client() -> LLMClient:
+    return LLMClient(settings.llm_gateway_url)
+
+def get_embedding_client() -> EmbeddingClient:
+    return EmbeddingClient(settings.llm_gateway_url)
+

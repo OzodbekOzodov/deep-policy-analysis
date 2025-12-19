@@ -1,34 +1,40 @@
 import time
 import uuid
 import logging
-from typing import Any, Dict, List, Optional, Union
-import json
-
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
-from google import genai
-from google.genai import types
+import asyncio
+from typing import List, Dict, Any, Optional, Union
+from fastapi import FastAPI, HTTPException, status
+from pydantic import BaseModel
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-from .config import settings
+import google.generativeai as genai
+from openai import AsyncOpenAI
+import google.api_core.exceptions
+
+from app.config import settings
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("llm-gateway")
+logger = logging.getLogger(__name__)
 
-# Initialize Client
-# The SDK automatically picks up GEMINI_API_KEY from env if available,
-# but we allow explicit passing too to be safe.
-client = genai.Client(api_key=settings.GEMINI_API_KEY)
+# Configure Gemini
+genai.configure(api_key=settings.gemini_api_key)
 
-app = FastAPI(title="LLM Gateway", version="1.0.0")
+# Configure OpenAI (lazy initialization potential, but client is lightweight)
+openai_client = None
+if settings.openai_api_key:
+    openai_client = AsyncOpenAI(
+        api_key=settings.openai_api_key,
+        base_url=settings.openai_base_url
+    )
 
-# Models for API
+app = FastAPI(title="LLM Gateway Service")
+
+# Data Models
 class CompletionRequest(BaseModel):
     task: str
     prompt: str
-    response_schema: Optional[Dict[str, Any]] = Field(default=None, alias="schema")
+    schema: Optional[Dict[str, Any]] = None
     temperature: float = 0.2
     max_tokens: int = 4000
     model: Optional[str] = None
@@ -50,105 +56,129 @@ class EmbeddingResponse(BaseModel):
     tokens: int
     latency_ms: int
 
-# Retry Logic
-# We need to catch correct exceptions from google-genai. 
-# Usually they are google.genai.errors or similar, but for now we catch generic Exception 
-# and check specific messages or status codes if possible, 
-# or import exceptions if accessible.
-# google-genai >= 0.1 usually raises standard exceptions or mapped ones.
-# For simplicity in this iteration, generic retry on Exception is risky but okay for HTTP errors.
-# Better: check for "429" in error message.
-def is_rate_limit_error(exception):
-    return "429" in str(exception) or "ResourceExhausted" in str(exception)
+# Helpers
+def is_gemini_model(model_name: str) -> bool:
+    return "gemini" in model_name.lower()
 
-retry_policy = retry(
-    reraise=True,
+# Logic
+@retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=1, max=4),
-    retry=retry_if_exception_type(Exception) # Refine this if specific exceptions are known
+    retry=retry_if_exception_type((
+        google.api_core.exceptions.GoogleAPICallError,
+        ConnectionError,
+        TimeoutError
+    ))
 )
-
-@app.middleware("http")
-async def log_requests(request: Request, call_next):
-    request_id = str(uuid.uuid4())
-    start_time = time.time()
+async def generate_gemini(request: CompletionRequest, request_id: str) -> CompletionResponse:
+    start_time = time.perf_counter()
+    model_name = request.model or settings.default_model
     
-    response = await call_next(request)
+    generation_config = {
+        "temperature": request.temperature,
+        "max_output_tokens": request.max_tokens,
+    }
     
-    latency = int((time.time() - start_time) * 1000)
-    logger.info(
-        f"Request: {request.method} {request.url.path} | "
-        f"Status: {response.status_code} | "
-        f"Latency: {latency}ms | "
-        f"ID: {request_id}"
-    )
-    return response
-
-@app.get("/health")
-async def health_check():
-    return {"status": "ok", "provider": "gemini", "sdk": "google-genai"}
-
-@app.post("/v1/complete", response_model=CompletionResponse)
-async def complete(request: CompletionRequest):
-    request_id = str(uuid.uuid4())
-    start_time = time.time()
+    if request.schema:
+        generation_config["response_mime_type"] = "application/json"
+        generation_config["response_schema"] = request.schema
+        
+    model = genai.GenerativeModel(model_name)
     
-    model_name = request.model or settings.DEFAULT_MODEL
+    # Construct prompt. Task + Prompt usually.
+    full_prompt = f"Task: {request.task}\n\n{request.prompt}"
     
     try:
-        config_args = {
-            "temperature": request.temperature,
-            "max_output_tokens": request.max_tokens,
-        }
-        
-        # If schema provided, configure structured output
-        if request.response_schema:
-            config_args["response_mime_type"] = "application/json"
-            config_args["response_schema"] = request.response_schema
-
-        # Call generate_content
-        # Note: google-genai is synchronous by default unless using async client?
-        # The documentation snippet showed 'client = genai.Client()', which is sync.
-        # For FastAPI, sync calls block the event loop. 
-        # Ideally we should use the async client if available or run in threadpool.
-        # google-genai has an async client? 
-        # Checking docs (implicit): usually 'genai.Client' is sync.
-        # fastAPI runs sync functions in threadpool, so 'def complete' works fine if not 'async def'.
-        # BUT we defined 'async def complete'. If we call sync code inside, it blocks.
-        # We should either make this function 'def complete' (FastAPI handles it in thread)
-        # OR use run_in_executor.
-        # For now, let's change handler to 'def complete' to be safe with sync client,
-        # OR check if there is 'client.aio'.
-        # Assuming sync client for now based on user snippet.
-        
-        response = client.models.generate_content(
-            model=model_name,
-            contents=request.prompt,
-            config=config_args
+        response = await model.generate_content_async(
+            full_prompt,
+            generation_config=generation_config
         )
         
-        # Parse content
-        if request.response_schema:
-            try:
-                # response.text should be JSON string
-                content = json.loads(response.text)
-            except (json.JSONDecodeError, ValueError):
-                logger.error(f"Failed to parse JSON response: {response.text}")
-                content = response.text
-        else:
-            content = response.text
-            
-        # Usage metadata
+        latency = int((time.perf_counter() - start_time) * 1000)
+        
+        # Token usage estimation (Gemini API provides usage_metadata access)
+        # Note: python client 0.8.0 access might vary, usually response.usage_metadata
         input_tokens = 0
         output_tokens = 0
-        if response.usage_metadata:
+        if hasattr(response, "usage_metadata"):
              input_tokens = response.usage_metadata.prompt_token_count
              output_tokens = response.usage_metadata.candidates_token_count
         
-        latency = int((time.time() - start_time) * 1000)
+        content = response.text
+        if request.schema:
+             import json
+             try:
+                 content = json.loads(content)
+             except json.JSONDecodeError:
+                 logger.error(f"Failed to decode JSON from Gemini: {content}")
+                 # Fallback to string if parsing fails, or could raise error
+                 pass
+
+        return CompletionResponse(
+            content=content,
+            model_used=model_name,
+            tokens={"input": input_tokens, "output": output_tokens},
+            latency_ms=latency,
+            request_id=request_id
+        )
         
-        logger.info(f"Complete | Task: {request.task} | Model: {model_name} | Latency: {latency}ms | Tokens: {input_tokens}/{output_tokens}")
+    except Exception as e:
+        logger.error(f"Gemini generation failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Gemini Error: {str(e)}")
+
+# Logic
+async def generate_openai_compatible(request: CompletionRequest, request_id: str) -> CompletionResponse:
+    if not openai_client:
+         raise HTTPException(
+             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+             detail="OpenAI/Compatible provider is not configured (missing API key)."
+         )
+    return await _generate_openai_compatible_impl(request, request_id)
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=4),
+    reraise=True
+)
+async def _generate_openai_compatible_impl(request: CompletionRequest, request_id: str) -> CompletionResponse:
+    start_time = time.perf_counter()
+    model_name = request.model 
+    if not model_name:
+         raise HTTPException(status_code=400, detail="Model name required for non-Gemini providers")
+
+    messages = [
+        {"role": "system", "content": request.task},
+        {"role": "user", "content": request.prompt}
+    ]
+    
+    params = {
+        "model": model_name,
+        "messages": messages,
+        "temperature": request.temperature,
+        "max_tokens": request.max_tokens,
+    }
+    
+    if request.schema:
+        params["response_format"] = {"type": "json_object"}
+        messages[-1]["content"] += "\n\nPlease respond in JSON matching the schema."
+    
+    try:
+        response = await openai_client.chat.completions.create(**params)
+        latency = int((time.perf_counter() - start_time) * 1000)
         
+        resp_content = response.choices[0].message.content
+        input_tokens = response.usage.prompt_tokens
+        output_tokens = response.usage.completion_tokens
+        
+        content = resp_content
+        if request.schema:
+             import json
+             try:
+                 content = json.loads(content)
+             except json.JSONDecodeError:
+                 logger.error("Failed to decode JSON from OpenAI provider")
+                 pass
+
         return CompletionResponse(
             content=content,
             model_used=model_name,
@@ -158,55 +188,62 @@ async def complete(request: CompletionRequest):
         )
 
     except Exception as e:
-        logger.error(f"Error in complete: {str(e)}")
-        if is_rate_limit_error(e):
-             raise HTTPException(status_code=429, detail="Rate limit exceeded")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"OpenAI compatible generation failed: {e}")
+        # Re-raise generic exceptions to trigger retry
+        raise
+
+# Endpoints
+
+@app.get("/health")
+async def health():
+    return {
+        "status": "ok", 
+        "provider": "gemini", 
+        "openai_compatible": bool(openai_client)
+    }
+
+@app.post("/v1/complete", response_model=CompletionResponse)
+async def complete(request: CompletionRequest):
+    request_id = str(uuid.uuid4())
+    model = request.model or settings.default_model
+    
+    if is_gemini_model(model):
+        return await generate_gemini(request, request_id)
+    else:
+        return await generate_openai_compatible(request, request_id)
 
 @app.post("/v1/embed", response_model=EmbeddingResponse)
-def embed(request: EmbeddingRequest):
-    # Changed to sync def to allow blocking call in threadpool
-    start_time = time.time()
-    model_name = request.model or settings.EMBEDDING_MODEL
+async def embed(request: EmbeddingRequest):
+    # Only supporting Gemini embeddings as per spec for now
+    # Could expand later
+    start_time = time.perf_counter()
+    model_name = request.model or settings.embedding_model
     
+    # Gemini embedding
     try:
-        # embed_content supports batching?
-        # contents: str or List[str]
-        
-        response = client.models.embed_content(
+        # batch processing
+        result = genai.embed_content(
             model=model_name,
-            contents=request.texts,
+            content=request.texts,
+            task_type="retrieval_document" # Defaulting for general use
         )
         
-        # Response structure for list input:
-        # verification needed. Usually has 'embeddings' list.
-        # response.embeddings -> list of EmbedContentResponse or list of lists?
-        # According to some docs, response.embeddings is a list of Embedding objects, each has .values
+        # Result dict usually has 'embedding' key which is list of list if input is list
+        embeddings = result['embedding']
         
-        embeddings = []
-        if hasattr(response, 'embeddings'):
-            if response.embeddings:
-                for emb in response.embeddings:
-                    embeddings.append(emb.values)
-        else:
-             # Fallback/Check
-             # If single?
-             pass
-
-        # If user passed list, we expect list of embeddings.
+        latency = int((time.perf_counter() - start_time) * 1000)
         
-        latency = int((time.time() - start_time) * 1000)
+        # Token counting for embeddings is not always strictly returned in the same way
+        # Rough estimate or 0 if unavailable
         tokens = 0 
         
         return EmbeddingResponse(
-            embeddings=embeddings,
-            model_used=model_name,
-            tokens=tokens,
-            latency_ms=latency
+             embeddings=embeddings,
+             model_used=model_name,
+             tokens=tokens,
+             latency_ms=latency
         )
         
     except Exception as e:
-        logger.error(f"Error in embed: {str(e)}")
-        if is_rate_limit_error(e):
-             raise HTTPException(status_code=429, detail="Rate limit exceeded")
+        logger.error(f"Embedding failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
