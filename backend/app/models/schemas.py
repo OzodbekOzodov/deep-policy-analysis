@@ -160,6 +160,10 @@ class GraphResponse(BaseModel):
     links: list[RelationshipResponse] = Field(default_factory=list)
     version: int = Field(default=1, ge=1)
     analysis_id: UUID
+    summary: Optional[str] = None
+    projected_gdp: Optional[list[float]] = None
+    social_stability: Optional[list[float]] = None
+    timeline_labels: Optional[list[str]] = None
 
     model_config = ConfigDict(
         json_schema_extra={

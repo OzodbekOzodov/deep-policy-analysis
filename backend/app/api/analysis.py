@@ -80,9 +80,8 @@ async def create_analysis(
     await db.commit()
     await db.refresh(analysis)
     
-    # Start background processing using FastAPI's BackgroundTasks
-    # (In production, this would be the orchestrator pipeline)
-    background_tasks.add_task(run_analysis_background, str(analysis.id))
+    # Start background processing using the real orchestrator pipeline
+    background_tasks.add_task(run_analysis_pipeline_task, str(analysis.id))
     
     return AnalysisResponse(
         id=analysis.id,
@@ -99,58 +98,18 @@ async def create_analysis(
     )
 
 
-async def run_analysis_background(analysis_id: str):
+async def run_analysis_pipeline_task(analysis_id: str):
     """
-    Background task to run analysis pipeline.
-    
-    This is a placeholder - will be replaced by orchestrator.
+    Background task to run the real analysis pipeline.
     """
     from app.api.deps import async_session_maker
-    
-    async with async_session_maker() as db:
-        # Simulate processing stages
-        analysis = await db.get(AnalysisJob, analysis_id)
-        if not analysis:
-            return
-        
-        try:
-            # Stage 1: Ingesting
-            analysis.status = "processing"
-            analysis.current_stage = "ingesting"
-            await db.commit()
-            await asyncio.sleep(1)
-            
-            # Stage 2: Extracting (placeholder)
-            analysis.current_stage = "extracting"
-            await db.commit()
-            await asyncio.sleep(2)
-            
-            # Stage 3: Complete
-            analysis.status = "complete"
-            analysis.current_stage = "complete"
-            analysis.completed_at = datetime.utcnow()
-            
-            # Generate simulation data (Placeholder logic)
-            timeline_labels = ["2024", "2025", "2026", "2027", "2028"]
-            projected_gdp = [100, 102, 105, 108, 112]  # Placeholder growth
-            social_stability = [75, 72, 70, 68, 65]    # Placeholder trend
-            
-            # Generate summary via LLM (or placeholder for now)
-            # In real implementation, this would come from the entity extraction results
-            summary = f"Analysis identified {analysis.entities_count.get('actors', 0)} actors, {analysis.entities_count.get('policies', 0)} policies, and key risks."
-            
-            # Update analysis job with simulation data
-            analysis.summary = summary
-            analysis.projected_gdp = projected_gdp
-            analysis.social_stability = social_stability
-            analysis.timeline_labels = timeline_labels
-            
-            await db.commit()
-            
-        except Exception as e:
-            analysis.status = "failed"
-            analysis.error_message = str(e)
-            await db.commit()
+    from app.services.orchestrator import run_pipeline
+
+    try:
+        # Run the real orchestrator pipeline
+        await run_pipeline(analysis_id, async_session_maker)
+    except Exception as e:
+        logger.error(f"Pipeline task failed for {analysis_id}: {e}")
 
 
 @router.get("/{analysis_id}", response_model=AnalysisResponse)

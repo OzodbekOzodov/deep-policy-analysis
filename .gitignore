@@ -90,3 +90,6 @@ coverage.xml
 *.pem
 *.key
 secrets/
+
+# Data
+knowledge_base/

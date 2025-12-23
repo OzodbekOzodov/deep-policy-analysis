@@ -11,10 +11,10 @@ from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy import select, update
 
-from app.models.database import AnalysisJob, Chunk, Entity, EntityProvenance, Relationship
+from app.models.database import AnalysisJob, Chunk, Entity, EntityProvenance, Relationship, Document
 from app.services.extraction import ExtractionService
 from app.services.events import emit_event
-from app.clients.llm import get_llm_client
+from app.api.deps import get_llm_client, get_embedding_client
 
 logger = logging.getLogger(__name__)
 
@@ -22,36 +22,102 @@ logger = logging.getLogger(__name__)
 class AnalysisPipeline:
     """
     Orchestrates the full analysis workflow:
-    1. Ingestion - Verify documents and chunks exist
-    2. Extraction - Extract APOR entities from each chunk
-    3. Complete - Mark analysis as done
+    1. Search - Search knowledge base for relevant chunks
+    2. Ingestion - Verify documents and chunks exist
+    3. Extraction - Extract APOR entities from each chunk
+    4. Complete - Mark analysis as done
     """
-    
+
     def __init__(self, analysis_id: UUID, session_maker: async_sessionmaker):
         self.analysis_id = analysis_id
         self.session_maker = session_maker
         self.extraction = ExtractionService(get_llm_client())
+        self.embedding_client = get_embedding_client()
     
     async def run(self) -> None:
         """Run the full pipeline."""
         try:
+            await self._update_status("processing", "searching")
+            await self._emit("stage_change", {"stage": "searching", "percent": 5})
+            await self._run_kb_search()
+
             await self._update_status("processing", "ingesting")
             await self._emit("stage_change", {"stage": "ingesting", "percent": 10})
             await self._run_ingestion()
-            
+
             await self._update_status("processing", "extracting")
             await self._emit("stage_change", {"stage": "extracting", "percent": 30})
             await self._run_extraction()
-            
+
             await self._update_status("complete", "complete")
             await self._emit("stage_change", {"stage": "complete", "percent": 100})
             await self._emit("done", {})
-            
+
         except Exception as e:
             logger.error(f"Pipeline failed for {self.analysis_id}: {e}")
             await self._update_status("failed", "failed", str(e))
             await self._emit("error", {"message": str(e)})
     
+    async def _run_kb_search(self) -> None:
+        """Search knowledge base and associate relevant chunks with this analysis."""
+        from sqlalchemy import text as sql_text
+
+        async with self.session_maker() as db:
+            # Get the analysis query
+            analysis = await db.get(AnalysisJob, self.analysis_id)
+            if not analysis:
+                raise ValueError(f"Analysis {self.analysis_id} not found")
+
+            query = analysis.query
+            logger.info(f"Searching KB for: {query}")
+
+            try:
+                # Get query embedding
+                embedding_result = await self.embedding_client.embed([query])
+                query_embedding = embedding_result[0]
+
+                # Search for top 20 relevant chunks from knowledge base
+                search_query = sql_text("""
+                    SELECT
+                        c.id,
+                        c.document_id,
+                        c.content,
+                        c.sequence
+                    FROM chunks c
+                    JOIN documents d ON c.document_id = d.id
+                    WHERE
+                        c.is_indexed = true
+                        AND c.embedding IS NOT NULL
+                        AND d.is_in_knowledge_base = true
+                    ORDER BY c.embedding <=> :embedding::vector
+                    LIMIT 20
+                """)
+
+                result = await db.execute(
+                    search_query,
+                    {"embedding": str(query_embedding)}
+                )
+
+                rows = result.fetchall()
+                logger.info(f"Found {len(rows)} relevant chunks from KB")
+
+                # Associate these chunks with the analysis by setting their analysis_id
+                for row in rows:
+                    chunk_id = row[0]
+                    await db.execute(
+                        update(Chunk)
+                        .where(Chunk.id == chunk_id)
+                        .values(analysis_id=self.analysis_id, extraction_status="pending")
+                    )
+
+                await db.commit()
+                await self._emit("stats_update", {"kb_chunks_found": len(rows)})
+
+            except Exception as e:
+                logger.error(f"KB search failed: {e}")
+                # Continue without KB chunks - user might have provided text_input
+                pass
+
     async def _run_ingestion(self) -> None:
         """Verify chunks exist for analysis."""
         async with self.session_maker() as db:
@@ -59,7 +125,7 @@ class AnalysisPipeline:
                 select(Chunk).where(Chunk.analysis_id == self.analysis_id)
             )
             chunks = result.scalars().all()
-            
+
             if not chunks:
                 logger.warning(f"No chunks found for analysis {self.analysis_id}")
             else:

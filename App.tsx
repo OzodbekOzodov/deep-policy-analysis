@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import QueryBuilderPage from './components/QueryBuilderPage';
 import DashboardView from './components/DashboardView';
 import TransitionLoader from './components/TransitionLoader';
-import { createAnalysis, pollUntilComplete, getGraph } from './services/api';
+import { createAnalysis, pollUntilComplete, getGraph, expandQuery } from './services/api';
 import { SimulationData, AgentLog, AnalysisState, PolicyNode, PolicyLink, AnalysisConfig } from './types';
 
 // Mock initial data
@@ -77,6 +77,25 @@ function App() {
     try {
       if (isMounted.current) setState(AnalysisState.CONNECTING);
 
+      // 0. Expand query into search variations
+      try {
+        const expansionResult = await expandQuery(searchQuery, 10);
+        if (isMounted.current && expansionResult.expansions.length > 1) {
+          addLog('QUERY_EXPANDER', 'QUERY_EXPANDED', `${expansionResult.expansions.length} variations generated`, 'scanning');
+          // Log a few example expansions (limit to 3 for UI cleanliness)
+          const sampleExpansions = expansionResult.expansions.slice(1, 4);
+          sampleExpansions.forEach((exp, idx) => {
+            addLog('QUERY_EXPANDER', `VARIANT_${idx + 1}`, exp, 'scanning');
+          });
+          if (expansionResult.cached) {
+            addLog('QUERY_EXPANDER', 'CACHE_HIT', 'Using cached expansions', 'idle');
+          }
+        }
+      } catch (expansionError) {
+        // Non-fatal: continue without expansions
+        console.warn('Query expansion failed:', expansionError);
+      }
+
       // 1. Create Analysis via Real API
       const { id } = await createAnalysis({ query: searchQuery });
       if (isMounted.current) addLog('DPA', 'JOB_CREATED', `ID: ${id.substring(0, 8)}`, 'scanning');
@@ -144,8 +163,9 @@ function App() {
     } catch (error) {
       console.error(error);
       if (isMounted.current) {
-        addLog('SYSTEM', 'ERROR', 'Analysis sequence failed', 'idle');
-        setState(AnalysisState.IDLE);
+        const errorMessage = error instanceof Error ? error.message : 'Analysis sequence failed';
+        addLog('SYSTEM', 'SEQUENCE_FAILED', errorMessage, 'error');
+        setState(AnalysisState.FAILED);
       }
     }
   }, [addLog]);

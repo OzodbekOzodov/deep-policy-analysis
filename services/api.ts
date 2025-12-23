@@ -82,6 +82,13 @@ export interface ProgressEvent {
     message?: string;
 }
 
+/** Query expansion response */
+export interface QueryExpansionResponse {
+    original_query: string;
+    expansions: string[];
+    cached: boolean;
+}
+
 /**
  * Create a new analysis
  */
@@ -120,6 +127,23 @@ export async function getGraph(analysisId: string): Promise<GraphResponse> {
 
     if (!response.ok) {
         throw new Error(`Failed to get graph: ${response.statusText}`);
+    }
+
+    return response.json();
+}
+
+/**
+ * Expand query into multiple search variations
+ */
+export async function expandQuery(query: string, numExpansions: number = 15): Promise<QueryExpansionResponse> {
+    const response = await fetch(`${API_URL}/api/knowledge/expand`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, num_expansions: numExpansions }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`Failed to expand query: ${response.statusText}`);
     }
 
     return response.json();
@@ -190,3 +214,4 @@ export async function checkHealth(): Promise<boolean> {
         return false;
     }
 }
+

@@ -34,7 +34,7 @@ export interface AgentLog {
   action: string;
   target: string;
   timestamp: string;
-  status: 'scanning' | 'connecting' | 'simulating' | 'idle';
+  status: 'scanning' | 'connecting' | 'simulating' | 'idle' | 'error';
 }
 
 export enum AnalysisState {
@@ -42,7 +42,8 @@ export enum AnalysisState {
   INGESTING = 'INGESTING',
   CONNECTING = 'CONNECTING',
   SIMULATING = 'SIMULATING',
-  COMPLETE = 'COMPLETE'
+  COMPLETE = 'COMPLETE',
+  FAILED = 'FAILED'
 }
 
 export interface Article {

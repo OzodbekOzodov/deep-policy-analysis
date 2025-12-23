@@ -69,13 +69,19 @@ class Document(Base):
     __tablename__ = "documents"
 
     id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
-    analysis_id = Column(UUID(as_uuid=True), ForeignKey("analysis_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    analysis_id = Column(UUID(as_uuid=True), ForeignKey("analysis_jobs.id", ondelete="CASCADE"), nullable=True, index=True)  # nullable for KB-only docs
     source_id = Column(UUID(as_uuid=True), ForeignKey("sources.id", ondelete="SET NULL"), nullable=True, index=True)
     title = Column(String(500), nullable=True)
     content_type = Column(String(50), nullable=True)
     raw_content = Column(Text, nullable=True)
     meta_data = Column("metadata", JSONB, server_default=text("'{}'"))
     is_in_knowledge_base = Column(Boolean, server_default=text("true"))
+    
+    # Processing status for document pipeline
+    processing_status = Column(String(20), server_default=text("'pending'"), index=True)  # pending, parsing, chunking, embedding, indexed, failed
+    processing_error = Column(Text, nullable=True)
+    processed_at = Column(DateTime(timezone=True), nullable=True)
+    
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
     # Relationships
@@ -84,17 +90,18 @@ class Document(Base):
     chunks = relationship("Chunk", back_populates="document", cascade="all, delete-orphan")
 
 
+
 class Chunk(Base):
     """Text chunks for processing."""
     __tablename__ = "chunks"
 
     id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
     document_id = Column(UUID(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
-    analysis_id = Column(UUID(as_uuid=True), ForeignKey("analysis_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    analysis_id = Column(UUID(as_uuid=True), ForeignKey("analysis_jobs.id", ondelete="CASCADE"), nullable=True, index=True)  # nullable for KB-only docs
     sequence = Column(Integer, nullable=False)
     content = Column(Text, nullable=False)
     token_count = Column(Integer, nullable=True)
-    embedding = Column(Vector(1536), nullable=True)  # OpenAI embeddings
+    embedding = Column(Vector(768), nullable=True)  # Gemini embeddings (768)
     is_indexed = Column(Boolean, server_default=text("false"))
     extraction_status = Column(String(20), server_default="pending")
     extraction_result = Column(JSONB, nullable=True)
