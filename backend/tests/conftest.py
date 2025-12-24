@@ -13,6 +13,7 @@ import pytest
 from httpx import AsyncClient
 from pypdf import PdfWriter
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy.pool import NullPool
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -29,8 +30,8 @@ TEST_DATABASE_URL = os.getenv(
     "postgresql+asyncpg://localhost/dap_test"
 )
 
-# Test engine
-engine = create_async_engine(TEST_DATABASE_URL, echo=False)
+# Test engine - use NullPool to avoid connection issues during testing
+engine = create_async_engine(TEST_DATABASE_URL, echo=False, poolclass=NullPool)
 TestingSessionLocal = async_sessionmaker(
     engine, class_=AsyncSession, expire_on_commit=False
 )
@@ -51,6 +52,7 @@ def event_loop() -> Generator:
 @pytest.fixture(scope="function")
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
     """Create a fresh database session for each test."""
+    # Drop all tables and recreate them
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
@@ -227,7 +229,7 @@ async def indexed_document(
     db_session: AsyncSession,
     sample_text_document: str,
     mock_embedding_client: MagicMock
-) -> Document:
+) -> AsyncGenerator[Document, None]:
     """Create a fully indexed document with chunks and embeddings."""
     # Create source
     source = Source(
@@ -268,15 +270,15 @@ async def indexed_document(
 
 
 @pytest.fixture
-def document_processor(db_session: AsyncSession, mock_embedding_client: MagicMock) -> DocumentProcessor:
+async def document_processor(db_session: AsyncSession, mock_embedding_client: MagicMock) -> AsyncGenerator[DocumentProcessor, None]:
     """Create a DocumentProcessor instance with mocked dependencies."""
-    return DocumentProcessor(db_session, mock_embedding_client)
+    yield DocumentProcessor(db_session, mock_embedding_client)
 
 
 @pytest.fixture
-def knowledge_base_service(
+async def knowledge_base_service(
     db_session: AsyncSession,
     mock_embedding_client: MagicMock
-) -> KnowledgeBaseService:
+) -> AsyncGenerator[KnowledgeBaseService, None]:
     """Create a KnowledgeBaseService instance with mocked dependencies."""
-    return KnowledgeBaseService(db_session, mock_embedding_client)
+    yield KnowledgeBaseService(db_session, mock_embedding_client)

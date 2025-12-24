@@ -79,9 +79,9 @@ class TestQueryExpansionService:
 
         # Mock to return exact count
         async def mock_complete(prompt, **kwargs):
-            num = kwargs.get("num_expansions", 5)
-            expansions = [f"expansion_{i}" for i in range(num)]
-            return f'{{"expansions": {expansions}}}'
+            # Return 10 expansions as requested
+            expansions = [f"expansion_{i}" for i in range(10)]
+            return {"expansions": expansions}
 
         mock_llm_client.complete = AsyncMock(side_effect=mock_complete)
 

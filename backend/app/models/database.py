@@ -22,13 +22,13 @@ class AnalysisJob(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
     query = Column(Text, nullable=False)
-    scope = Column(JSONB, server_default=text("'{}'"))
+    scope = Column(JSONB, server_default="{}")
     depth = Column(String(20), server_default="standard")
     status = Column(String(20), server_default="created", index=True)
     current_stage = Column(String(50), nullable=True)
     error_message = Column(Text, nullable=True)
-    entities_count = Column(JSONB, server_default=text("'{\"actors\":0,\"policies\":0,\"outcomes\":0,\"risks\":0}'"))
-    tokens_used = Column(Integer, server_default=text("0"))
+    entities_count = Column(JSONB, server_default="{}")
+    tokens_used = Column(Integer, server_default="0")
 
     # Visualization data
     summary = Column(Text, nullable=True)
@@ -65,7 +65,7 @@ class Source(Base):
     author = Column(String(255), nullable=True)
     publish_date = Column(Date, nullable=True)
     fetch_date = Column(DateTime(timezone=True), server_default=func.now())
-    meta_data = Column("metadata", JSONB, server_default=text("'{}'"))
+    meta_data = Column("metadata", JSONB, server_default="{}")
 
     # Relationships
     documents = relationship("Document", back_populates="source")
@@ -81,11 +81,11 @@ class Document(Base):
     title = Column(String(500), nullable=True)
     content_type = Column(String(50), nullable=True)
     raw_content = Column(Text, nullable=True)
-    meta_data = Column("metadata", JSONB, server_default=text("'{}'"))
-    is_in_knowledge_base = Column(Boolean, server_default=text("true"))
-    
+    meta_data = Column("metadata", JSONB, server_default="{}")
+    is_in_knowledge_base = Column(Boolean, server_default="true")
+
     # Processing status for document pipeline
-    processing_status = Column(String(20), server_default=text("'pending'"), index=True)  # pending, parsing, chunking, embedding, indexed, failed
+    processing_status = Column(String(20), server_default="pending", index=True)  # pending, parsing, chunking, embedding, indexed, failed
     processing_error = Column(Text, nullable=True)
     processed_at = Column(DateTime(timezone=True), nullable=True)
     
@@ -109,7 +109,7 @@ class Chunk(Base):
     content = Column(Text, nullable=False)
     token_count = Column(Integer, nullable=True)
     embedding = Column(Vector(768), nullable=True)  # Gemini embeddings (768)
-    is_indexed = Column(Boolean, server_default=text("false"))
+    is_indexed = Column(Boolean, server_default="false")
     extraction_status = Column(String(20), server_default="pending")
     extraction_result = Column(JSONB, nullable=True)
     search_vector = Column(TSVECTOR, nullable=True)
@@ -136,13 +136,13 @@ class Entity(Base):
     analysis_id = Column(UUID(as_uuid=True), ForeignKey("analysis_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
     entity_type = Column(String(20), nullable=False, index=True)
     label = Column(String(500), nullable=False)
-    aliases = Column(ARRAY(Text), server_default=text("'{}'"))
+    aliases = Column(ARRAY(Text), server_default="{}")
     confidence = Column(Integer, nullable=True)
-    impact_score = Column(Integer, server_default=text("50"))
+    impact_score = Column(Integer, server_default="50")
     summary = Column(Text, nullable=True)
     first_seen = Column(DateTime(timezone=True), nullable=True)
     last_seen = Column(DateTime(timezone=True), nullable=True)
-    is_resolved = Column(Boolean, server_default=text("false"))
+    is_resolved = Column(Boolean, server_default="false")
     merged_into = Column(UUID(as_uuid=True), ForeignKey("entities.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
