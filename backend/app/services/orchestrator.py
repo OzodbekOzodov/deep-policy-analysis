@@ -77,6 +77,9 @@ class AnalysisPipeline:
                 query_embedding = embedding_result[0]
 
                 # Search for top 20 relevant chunks from knowledge base
+                # Convert embedding list to PostgreSQL array format
+                embedding_str = '[' + ','.join(map(str, query_embedding)) + ']'
+
                 search_query = sql_text("""
                     SELECT
                         c.id,
@@ -89,13 +92,13 @@ class AnalysisPipeline:
                         c.is_indexed = true
                         AND c.embedding IS NOT NULL
                         AND d.is_in_knowledge_base = true
-                    ORDER BY c.embedding <=> :embedding::vector
+                    ORDER BY c.embedding <=> :embedding
                     LIMIT 20
                 """)
 
                 result = await db.execute(
                     search_query,
-                    {"embedding": str(query_embedding)}
+                    {"embedding": embedding_str}
                 )
 
                 rows = result.fetchall()

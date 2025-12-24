@@ -29,6 +29,13 @@ class AnalysisJob(Base):
     error_message = Column(Text, nullable=True)
     entities_count = Column(JSONB, server_default=text("'{\"actors\":0,\"policies\":0,\"outcomes\":0,\"risks\":0}'"))
     tokens_used = Column(Integer, server_default=text("0"))
+
+    # Visualization data
+    summary = Column(Text, nullable=True)
+    projected_gdp = Column(ARRAY(Integer), nullable=True)
+    social_stability = Column(ARRAY(Integer), nullable=True)
+    timeline_labels = Column(ARRAY(String(50)), nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     completed_at = Column(DateTime(timezone=True), nullable=True)

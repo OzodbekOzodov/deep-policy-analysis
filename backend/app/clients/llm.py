@@ -100,6 +100,17 @@ class EmbeddingClient:
         """Convenience method for single text."""
         result = await self.embed([text])
         return result[0]
-    
+
     async def close(self):
         await self.client.aclose()
+
+
+# Helper functions for dependency injection
+def get_llm_client() -> LLMClient:
+    """Get LLM client instance."""
+    return LLMClient()
+
+
+def get_embedding_client() -> EmbeddingClient:
+    """Get embedding client instance."""
+    return EmbeddingClient()

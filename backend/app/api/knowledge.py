@@ -229,6 +229,9 @@ async def search_knowledge_base(
         embedding_result = await embedding_client.embed([request.query])
         query_embedding = embedding_result[0]
 
+        # Convert embedding to PostgreSQL array format
+        embedding_str = '[' + ','.join(map(str, query_embedding)) + ']'
+
         # Perform hybrid search using both vector similarity and full-text
         # Using pgvector cosine distance
         query = sql_text("""
@@ -238,21 +241,21 @@ async def search_knowledge_base(
                 c.content,
                 c.sequence,
                 d.title as document_title,
-                (1 - (c.embedding <=> :embedding::vector)) as similarity_score
+                (1 - (c.embedding <=> :embedding)) as similarity_score
             FROM chunks c
             JOIN documents d ON c.document_id = d.id
             WHERE
                 c.is_indexed = true
                 AND c.embedding IS NOT NULL
                 AND d.is_in_knowledge_base = true
-            ORDER BY c.embedding <=> :embedding::vector
+            ORDER BY c.embedding <=> :embedding
             LIMIT :limit
         """)
 
         result = await db.execute(
             query,
             {
-                "embedding": str(query_embedding),
+                "embedding": embedding_str,
                 "limit": request.limit
             }
         )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from uuid import UUID, uuid4
 from datetime import datetime
 from typing import Optional
@@ -22,6 +23,7 @@ from app.models.database import AnalysisJob, Document, Chunk, Checkpoint
 from app.services.ingestion import ChunkingService
 
 router = APIRouter(prefix="/api/analysis", tags=["analysis"])
+logger = logging.getLogger(__name__)
 
 
 # Background task runners (to be implemented in orchestrator)

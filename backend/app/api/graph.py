@@ -104,10 +104,27 @@ async def get_graph(
         .where(Checkpoint.analysis_id == analysis_id)
     )
     version = version_result.scalar() or 1
-    
+
+    # Get summary and simulation data from analysis
+    summary = analysis.summary if hasattr(analysis, 'summary') else None
+    projected_gdp = analysis.projected_gdp if hasattr(analysis, 'projected_gdp') else None
+    social_stability = analysis.social_stability if hasattr(analysis, 'social_stability') else None
+    timeline_labels = analysis.timeline_labels if hasattr(analysis, 'timeline_labels') else None
+
+    # If no summary, generate a basic one
+    if not summary and nodes:
+        entity_counts = {"actors": 0, "policies": 0, "outcomes": 0, "risks": 0}
+        for node in nodes:
+            entity_counts[node.type + "s"] = entity_counts.get(node.type + "s", 0) + 1
+        summary = f"Analysis identified {entity_counts['actors']} actors, {entity_counts['policies']} policies, {entity_counts['outcomes']} outcomes, and {entity_counts['risks']} risks across {len(links)} relationships."
+
     return GraphResponse(
         nodes=nodes,
         links=links,
         version=version,
-        analysis_id=analysis_id
+        analysis_id=analysis_id,
+        summary=summary,
+        projected_gdp=projected_gdp,
+        social_stability=social_stability,
+        timeline_labels=timeline_labels
     )
