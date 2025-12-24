@@ -79,14 +79,18 @@ const DashboardView: React.FC<DashboardViewProps> = ({
             { id: 'init', message: 'Initializing Policy Engine...', status: 'complete', timestamp: '00:00:01' },
         ];
 
-        // Dynamic State Steps
+        // Dynamic State Steps - handle FAILED state
+        const isComplete = state === AnalysisState.COMPLETE;
+        const isFailed = state === AnalysisState.FAILED;
+        const isFinished = isComplete || isFailed;
+
         if (state === AnalysisState.INGESTING) {
             baseSteps.push(
                 { id: 'ingest', message: 'Ingesting data sources...', status: 'loading' }
             );
-        } else if (state === AnalysisState.CONNECTING || state === AnalysisState.SIMULATING || state === AnalysisState.COMPLETE) {
+        } else if (state === AnalysisState.CONNECTING || state === AnalysisState.SIMULATING || isFinished) {
             baseSteps.push(
-                { id: 'ingest', message: 'Data sources validated', status: 'complete', timestamp: '00:00:15' }
+                { id: 'ingest', message: 'Data sources validated', status: isFailed ? 'failed' : 'complete', timestamp: '00:00:15' }
             );
         }
 
@@ -94,9 +98,9 @@ const DashboardView: React.FC<DashboardViewProps> = ({
             baseSteps.push(
                 { id: 'connect', message: 'Mapping entity relationships...', status: 'loading' }
             );
-        } else if (state === AnalysisState.SIMULATING || state === AnalysisState.COMPLETE) {
+        } else if (state === AnalysisState.SIMULATING || isFinished) {
             baseSteps.push(
-                { id: 'connect', message: 'Knowledge graph built', status: 'complete', timestamp: '00:00:42' }
+                { id: 'connect', message: 'Knowledge graph built', status: isFailed ? 'failed' : 'complete', timestamp: '00:00:42' }
             );
         }
 
@@ -104,26 +108,36 @@ const DashboardView: React.FC<DashboardViewProps> = ({
             baseSteps.push(
                 { id: 'sim', message: 'Running predictive models...', status: 'loading' }
             );
-        } else if (state === AnalysisState.COMPLETE) {
+        } else if (isComplete) {
             baseSteps.push(
                 { id: 'sim', message: 'Simulation complete', status: 'complete', timestamp: '00:01:12' },
                 { id: 'syn', message: 'Synthesizing final report', status: 'complete', timestamp: '00:01:15' }
             );
+        } else if (isFailed) {
+            baseSteps.push(
+                { id: 'sim', message: 'Simulation interrupted', status: 'failed', timestamp: '00:01:12' }
+            );
         }
 
-        // Interleave interesting logs as 'steps' if they are unique enough
-        // For simplicity, we just append a few dynamic ones from the logs if needed, 
-        // but the user wants a cleaner view. Let's stick to the high-level state steps + maybe 1-2 latest logs if active.
+        // Map logs to reasoning steps
+        const logSteps: ReasoningStep[] = logs.slice(-5).map(log => {
+            let status: ReasoningStep['status'] = 'complete';
 
-        // Actually, let's map the specific "logs" to steps if they are substantial 
-        // effectively creating a hybrid view.
+            // Determine status based on log status and global state
+            if (log.status === 'error') {
+                status = 'failed';
+            } else if (!isFinished) {
+                status = log.status === 'idle' ? 'complete' :
+                    (log.status === 'scanning' || log.status === 'connecting' || log.status === 'simulating' ? 'loading' : 'complete');
+            }
 
-        const logSteps: ReasoningStep[] = logs.slice(-5).map(log => ({
-            id: log.id,
-            message: `${log.agentName}: ${log.action} ${log.target ? `on ${log.target}` : ''}`,
-            status: log.status === 'idle' ? 'complete' : (log.status === 'scanning' || log.status === 'connecting' || log.status === 'simulating' ? 'loading' : 'complete'),
-            timestamp: log.timestamp
-        }));
+            return {
+                id: log.id,
+                message: `${log.agentName}: ${log.action} ${log.target ? `on ${log.target}` : ''}`,
+                status: status,
+                timestamp: log.timestamp
+            };
+        });
 
         // Combine for a rich feel, but keep it clean.
         // If we are in IDLE, just show initialized.

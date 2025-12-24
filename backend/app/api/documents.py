@@ -5,14 +5,15 @@ from __future__ import annotations
 from uuid import UUID, uuid4
 from datetime import datetime
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
-from app.api.deps import get_db
 from app.models.schemas import UploadDocumentRequest, DocumentResponse
+from app.api.deps import get_db, get_embedding_client
+from app.clients.llm import EmbeddingClient
+from app.services.ingestion import IngestionService
 from app.models.database import Document, Chunk, AnalysisJob
-from app.services.ingestion import ChunkingService
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
@@ -20,8 +21,9 @@ router = APIRouter(prefix="/api/documents", tags=["documents"])
 @router.post("/", response_model=DocumentResponse)
 async def upload_document(
     request: UploadDocumentRequest,
-    analysis_id: Optional[UUID] = None,
-    db: AsyncSession = Depends(get_db)
+    analysis_id: UUID = Query(..., description="Analysis to attach document to"),
+    db: AsyncSession = Depends(get_db),
+    embedding_client: EmbeddingClient = Depends(get_embedding_client)
 ):
     """
     Upload a document for analysis.
@@ -29,59 +31,38 @@ async def upload_document(
     If analysis_id is provided, associates document with that analysis.
     Otherwise creates a standalone document.
     """
-    # Create analysis if not provided
-    if analysis_id is None:
-        analysis = AnalysisJob(
-            query=request.title or "Document Analysis",
-            status="created"
-        )
-        db.add(analysis)
-        await db.flush()
-        analysis_id = analysis.id
-    else:
-        # Verify analysis exists
-        result = await db.execute(
-            select(AnalysisJob).where(AnalysisJob.id == analysis_id)
-        )
-        analysis = result.scalar_one_or_none()
-        if not analysis:
-            raise HTTPException(status_code=404, detail="Analysis not found")
-    
-    # Create document
-    document = Document(
-        analysis_id=analysis_id,
-        title=request.title or "Untitled Document",
-        content_type=request.content_type,
-        raw_content=request.content,
-        meta_data=request.metadata or {}
+    # Verify analysis exists
+    result = await db.execute(
+        select(AnalysisJob).where(AnalysisJob.id == analysis_id)
     )
-    db.add(document)
-    await db.flush()
+    analysis = result.scalar_one_or_none()
+    if not analysis:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+
+    service = IngestionService(db, embedding_client)
     
-    # Chunk the content
-    chunker = ChunkingService()
-    chunk_data = chunker.chunk_text(request.content)
-    
-    # Store chunks
-    for chunk_info in chunk_data:
-        chunk = Chunk(
-            document_id=document.id,
+    try:
+        result = await service.ingest_text(
+            text=request.content,
             analysis_id=analysis_id,
-            sequence=chunk_info["sequence"],
-            content=chunk_info["content"],
-            token_count=chunk_info["token_count"],
-            extraction_status="pending"
+            title=request.title,
+            source_type="paste" # or map from request if available
         )
-        db.add(chunk)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ingestion failed: {e}")
     
-    await db.commit()
+    # Fetch and return document
+    document_result = await db.execute(
+        select(Document).where(Document.id == result["document_id"])
+    )
+    document = document_result.scalar_one()
     
     return DocumentResponse(
         id=document.id,
         title=document.title,
-        content_type=document.content_type,
-        chunks_count=len(chunk_data),
-        created_at=document.created_at
+        content_type="text/plain", # Default for pasted text
+        chunks_count=result["chunks_created"],
+        created_at=datetime.utcnow() # Approximation or fetch from source/doc
     )
 
 

@@ -98,9 +98,10 @@ class ExtractionService:
         formatted_prompt = prompt.format(text=text)
         
         try:
+            # Prepend system prompt to the user prompt since complete() doesn't accept system_prompt
+            full_prompt = f"{EXTRACTION_SYSTEM_PROMPT}\n\n{formatted_prompt}"
             result = await self.llm.complete(
-                prompt=formatted_prompt,
-                system_prompt=EXTRACTION_SYSTEM_PROMPT,
+                prompt=full_prompt,
                 schema=ENTITY_SCHEMA,
                 temperature=0.1  # Low temperature for extraction
             )
@@ -127,9 +128,10 @@ class ExtractionService:
         )
         
         try:
+            # Prepend system prompt to the user prompt since complete() doesn't accept system_prompt
+            full_prompt = f"{EXTRACTION_SYSTEM_PROMPT}\n\n{formatted_prompt}"
             result = await self.llm.complete(
-                prompt=formatted_prompt,
-                system_prompt=EXTRACTION_SYSTEM_PROMPT,
+                prompt=full_prompt,
                 schema=RELATIONSHIP_SCHEMA,
                 temperature=0.1
             )
