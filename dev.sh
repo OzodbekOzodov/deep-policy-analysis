@@ -6,7 +6,7 @@
 # Starts all services in the correct order:
 #   1. LLM Gateway (port 8001)
 #   2. Backend API (port 8000)
-#   3. Frontend Dev Server (port 5173)
+#   3. Frontend Dev Server (port 3000)
 # =============================================================================
 
 set -e
@@ -86,7 +86,7 @@ cleanup() {
     # Kill by port as fallback
     kill_port 8001
     kill_port 8000
-    kill_port 5173
+    kill_port 3000
     
     log_success "All services stopped."
     exit 0
@@ -167,7 +167,7 @@ fi
 log_info "Checking for existing services..."
 kill_port 8001
 kill_port 8000
-kill_port 5173
+kill_port 3000
 
 # -----------------------------------------------------------------------------
 # Start Services
@@ -207,8 +207,8 @@ else
     exit 1
 fi
 
-# 3. Start Frontend (port 5173)
-log_info "Starting Frontend on port 5173..."
+# 3. Start Frontend (port 3000)
+log_info "Starting Frontend on port 3000..."
 cd "$SCRIPT_DIR"
 npm run dev > /tmp/dap-frontend.log 2>&1 &
 FRONTEND_PID=$!
@@ -252,7 +252,7 @@ echo -e "${GREEN}╔════════════════════
 echo -e "${GREEN}║                    All Services Ready!                   ║${NC}"
 echo -e "${GREEN}╚══════════════════════════════════════════════════════════╝${NC}"
 echo ""
-echo -e "  ${BLUE}Frontend:${NC}    http://localhost:5173"
+echo -e "  ${BLUE}Frontend:${NC}    http://localhost:3000"
 echo -e "  ${BLUE}Backend:${NC}     http://localhost:8000"
 echo -e "  ${BLUE}LLM Gateway:${NC} http://localhost:8001"
 echo -e "  ${BLUE}API Docs:${NC}    http://localhost:8000/docs"
