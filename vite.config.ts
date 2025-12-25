@@ -18,6 +18,8 @@ export default defineConfig(({ mode }) => {
         alias: {
           '@': path.resolve(__dirname, '.'),
         }
-      }
+      },
+      // SPA fallback for routing
+      // In production, the server needs to be configured to return index.html for all routes
     };
 });

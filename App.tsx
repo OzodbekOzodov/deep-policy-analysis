@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import QueryBuilderPage from './components/QueryBuilderPage';
 import DashboardView from './components/DashboardView';
 import TransitionLoader from './components/TransitionLoader';
-import { createAnalysis, pollUntilComplete, getGraph, expandQuery } from './services/api';
+import { createAnalysis, pollUntilComplete, getGraph, expandQuery, getAnalysis } from './services/api';
 import { SimulationData, AgentLog, AnalysisState, PolicyNode, PolicyLink, AnalysisConfig } from './types';
 
 // Mock initial data
@@ -18,9 +18,30 @@ const INITIAL_SIMULATION: SimulationData = {
   timelineLabels: ["T-0", "T+1", "T+2", "T+3", "T+4"]
 };
 
+// URL routing helpers
+const parseRoute = () => {
+  const path = window.location.pathname;
+  if (path === '/' || path === '') {
+    return { view: 'query_builder' as const, analysisId: null };
+  }
+  // Match /chat/:analysisId
+  const match = path.match(/^\/chat\/([a-f0-9-]+)$/);
+  if (match) {
+    return { view: 'dashboard' as const, analysisId: match[1] };
+  }
+  return { view: 'query_builder' as const, analysisId: null };
+};
+
+const navigate = (path: string) => {
+  window.history.pushState({}, '', path);
+  window.dispatchEvent(new Event('popstate'));
+};
+
 function App() {
-  // Navigation State
-  const [view, setView] = useState<'query_builder' | 'transition' | 'dashboard'>('query_builder');
+  // Navigation State - derived from URL
+  const route = parseRoute();
+  const [view, setView] = useState<'query_builder' | 'transition' | 'dashboard'>(route.view);
+  const [currentAnalysisId, setCurrentAnalysisId] = useState<string | null>(route.analysisId);
 
   // Data State
   const [query, setQuery] = useState('');
@@ -61,6 +82,87 @@ function App() {
     setLogs(prev => [...prev.slice(-50), newLog]);
   }, []);
 
+  // Load an existing analysis
+  const loadAnalysis = useCallback(async (analysisId: string) => {
+    try {
+      const analysis = await getAnalysis(analysisId);
+      setQuery(analysis.query);
+
+      if (analysis.status === 'complete') {
+        // Load graph data
+        const graphData = await getGraph(analysisId);
+        const uiNodes: PolicyNode[] = graphData.nodes.map(n => ({
+          id: n.id,
+          label: n.label,
+          type: n.type,
+          impactScore: n.impact_score,
+          confidence: n.confidence,
+          cluster: n.type === 'actor' ? 0 : n.type === 'policy' ? 1 : n.type === 'outcome' ? 2 : 3,
+          summary: n.summary || "No details available.",
+          firstSeen: new Date().toISOString().split('T')[0],
+          lastSeen: new Date().toISOString().split('T')[0],
+          sources: n.provenance.map(p => `Chunk ${p.chunk_id.substring(0, 4)}`)
+        }));
+
+        const uiLinks: PolicyLink[] = graphData.links.map(l => ({
+          source: l.source,
+          target: l.target,
+          strength: l.confidence / 10,
+          label: l.relationship
+        }));
+
+        setSimulationData({
+          nodes: uiNodes,
+          links: uiLinks,
+          summary: graphData.summary || "Analysis complete.",
+          projectedGDP: graphData.projected_gdp || [50, 50, 50, 50, 50],
+          socialStability: graphData.social_stability || [50, 50, 50, 50, 50],
+          timelineLabels: graphData.timeline_labels || ["T+1", "T+2", "T+3", "T+4", "T+5"]
+        });
+        setState(AnalysisState.COMPLETE);
+      } else if (analysis.status === 'processing') {
+        setState(AnalysisState.CONNECTING);
+        // Start polling for completion
+        pollUntilComplete(analysisId, (status, stage) => {
+          // Optional: update progress
+        }).then(() => {
+          loadAnalysis(analysisId); // Reload after completion
+        });
+      } else if (analysis.status === 'failed') {
+        setState(AnalysisState.FAILED);
+        addLog('SYSTEM', 'LOAD_FAILED', analysis.error_message || 'Unknown error', 'error');
+      }
+    } catch (error) {
+      console.error('Failed to load analysis:', error);
+      setState(AnalysisState.FAILED);
+      addLog('SYSTEM', 'LOAD_FAILED', 'Analysis not found', 'error');
+    }
+  }, [addLog]);
+
+  // Handle browser back/forward
+  useEffect(() => {
+    const handlePopState = () => {
+      const newRoute = parseRoute();
+      setView(newRoute.view);
+      setCurrentAnalysisId(newRoute.analysisId);
+      if (newRoute.analysisId) {
+        // Load existing analysis
+        loadAnalysis(newRoute.analysisId);
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+
+    // Load analysis from URL on initial mount
+    if (route.analysisId) {
+      loadAnalysis(route.analysisId);
+    }
+
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [loadAnalysis, route.analysisId]);
+
   const runAnalysisSequence = useCallback(async (searchQuery: string) => {
     if (!searchQuery.trim()) return;
 
@@ -68,7 +170,6 @@ function App() {
 
     if (isMounted.current) {
       setState(AnalysisState.INGESTING);
-      // Clear previous data for a fresh run
       setSimulationData({ ...INITIAL_SIMULATION, summary: "Initializing Neural Handshake..." });
       setLogs([]);
       addLog('SYSTEM', 'INITIATING_SEQUENCE', searchQuery.toUpperCase(), 'scanning');
@@ -82,7 +183,6 @@ function App() {
         const expansionResult = await expandQuery(searchQuery, 10);
         if (isMounted.current && expansionResult.expansions.length > 1) {
           addLog('QUERY_EXPANDER', 'QUERY_EXPANDED', `${expansionResult.expansions.length} variations generated`, 'scanning');
-          // Log a few example expansions (limit to 3 for UI cleanliness)
           const sampleExpansions = expansionResult.expansions.slice(1, 4);
           sampleExpansions.forEach((exp, idx) => {
             addLog('QUERY_EXPANDER', `VARIANT_${idx + 1}`, exp, 'scanning');
@@ -92,7 +192,6 @@ function App() {
           }
         }
       } catch (expansionError) {
-        // Non-fatal: continue without expansions
         console.warn('Query expansion failed:', expansionError);
       }
 
@@ -100,7 +199,11 @@ function App() {
       const { id } = await createAnalysis({ query: searchQuery });
       if (isMounted.current) addLog('DPA', 'JOB_CREATED', `ID: ${id.substring(0, 8)}`, 'scanning');
 
-      // 2. Poll for completion
+      // 2. Update URL to /chat/:id
+      navigate(`/chat/${id}`);
+      setCurrentAnalysisId(id);
+
+      // 3. Poll for completion
       await pollUntilComplete(id, (status, stage) => {
         // Optional: update detail status if needed
       });
@@ -110,7 +213,7 @@ function App() {
         setState(AnalysisState.SIMULATING);
       }
 
-      // 3. Fetch Graph Results
+      // 4. Fetch Graph Results
       const graphData = await getGraph(id);
 
       if (!isMounted.current) return;
@@ -183,12 +286,19 @@ function App() {
   };
 
   const handleRefresh = () => {
-    runAnalysisSequence(query);
+    if (currentAnalysisId) {
+      loadAnalysis(currentAnalysisId);
+    } else {
+      runAnalysisSequence(query);
+    }
   };
 
   const handleBack = () => {
+    navigate('/');
     setView('query_builder');
     setState(AnalysisState.IDLE);
+    setCurrentAnalysisId(null);
+    setQuery('');
   };
 
   return (

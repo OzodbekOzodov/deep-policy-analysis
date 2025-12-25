@@ -9,10 +9,31 @@ import {
     Cpu,
     Layers,
     Search,
-    Upload
+    Upload,
+    X,
+    History as HistoryIcon,
+    CheckCircle,
+    XCircle,
+    Loader
 } from 'lucide-react';
 import { AnalysisConfig } from '../types';
 import TypewriterText from './TypewriterText';
+import { listAnalyses } from '../services/api';
+
+interface AnalysisHistoryItem {
+    id: string;
+    query: string;
+    status: 'complete' | 'processing' | 'failed';
+    created_at: string;
+    progress: {
+        stats: {
+            actors: number;
+            policies: number;
+            outcomes: number;
+            risks: number;
+        };
+    } | null;
+}
 
 interface QueryBuilderPageProps {
     onStart: (query: string, config: AnalysisConfig) => void;
@@ -22,6 +43,9 @@ interface QueryBuilderPageProps {
 const QueryBuilderPage: React.FC<QueryBuilderPageProps> = ({ onStart, history }) => {
     const [query, setQuery] = useState('');
     const [showConfig, setShowConfig] = useState(false);
+    const [showHistory, setShowHistory] = useState(false);
+    const [analysisHistory, setAnalysisHistory] = useState<AnalysisHistoryItem[]>([]);
+    const [loadingHistory, setLoadingHistory] = useState(false);
     const [config, setConfig] = useState<AnalysisConfig>({
         depth: 'standard',
         focus: { actors: true, policies: true, outcomes: true, risks: true },
@@ -43,6 +67,42 @@ const QueryBuilderPage: React.FC<QueryBuilderPageProps> = ({ onStart, history })
         }, 4000);
         return () => clearInterval(interval);
     }, []);
+
+    // Load analysis history when modal opens
+    useEffect(() => {
+        if (showHistory) {
+            setLoadingHistory(true);
+            listAnalyses({ limit: 20, status: 'complete' })
+                .then(data => {
+                    setAnalysisHistory(data as AnalysisHistoryItem[]);
+                })
+                .catch(err => {
+                    console.error('Failed to load history:', err);
+                })
+                .finally(() => {
+                    setLoadingHistory(false);
+                });
+        }
+    }, [showHistory]);
+
+    const formatDate = (dateString: string) => {
+        const date = new Date(dateString);
+        const now = new Date();
+        const diffMs = now.getTime() - date.getTime();
+        const diffMins = Math.floor(diffMs / 60000);
+        const diffHours = Math.floor(diffMs / 3600000);
+        const diffDays = Math.floor(diffMs / 86400000);
+
+        if (diffMins < 1) return 'Just now';
+        if (diffMins < 60) return `${diffMins}m ago`;
+        if (diffHours < 24) return `${diffHours}h ago`;
+        return `${diffDays}d ago`;
+    };
+
+    const handleHistoryItemClick = (item: AnalysisHistoryItem) => {
+        // Navigate to the analysis
+        window.location.href = `/chat/${item.id}`;
+    };
 
     const getEstimation = () => {
         if (config.depth === 'quick') return { time: '~2 min', chunks: 15, tokens: '45K', cost: 'Low' };
@@ -72,7 +132,7 @@ const QueryBuilderPage: React.FC<QueryBuilderPageProps> = ({ onStart, history })
                     </div>
                 </div>
                 <div className="flex gap-4 text-xs font-mono text-slate-500">
-                    <button className="hover:text-nexus-400 transition-colors">[HISTORY]</button>
+                    <button onClick={() => setShowHistory(true)} className="hover:text-nexus-400 transition-colors">[HISTORY]</button>
                     <button className="hover:text-nexus-400 transition-colors">[SETTINGS]</button>
                 </div>
             </div>
@@ -239,6 +299,89 @@ const QueryBuilderPage: React.FC<QueryBuilderPageProps> = ({ onStart, history })
                 </div>
 
             </div>
+
+            {/* History Modal */}
+            {showHistory && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+                    <div className="w-full max-w-2xl bg-nexus-900 border border-nexus-700 rounded-lg shadow-2xl">
+                        {/* Modal Header */}
+                        <div className="flex items-center justify-between p-4 border-b border-nexus-800">
+                            <div className="flex items-center gap-3">
+                                <HistoryIcon className="w-5 h-5 text-nexus-400" />
+                                <h2 className="text-sm font-mono font-bold text-slate-200">ANALYSIS HISTORY</h2>
+                            </div>
+                            <button
+                                onClick={() => setShowHistory(false)}
+                                className="p-1 hover:bg-nexus-800 rounded text-slate-500 hover:text-slate-300 transition-colors"
+                            >
+                                <X className="w-4 h-4" />
+                            </button>
+                        </div>
+
+                        {/* Modal Content */}
+                        <div className="p-4 max-h-96 overflow-y-auto custom-scrollbar">
+                            {loadingHistory ? (
+                                <div className="flex items-center justify-center py-12">
+                                    <Loader className="w-6 h-6 text-nexus-400 animate-spin" />
+                                    <span className="ml-3 text-sm text-slate-400 font-mono">Loading history...</span>
+                                </div>
+                            ) : analysisHistory.length === 0 ? (
+                                <div className="text-center py-12">
+                                    <HistoryIcon className="w-12 h-12 text-slate-700 mx-auto mb-3" />
+                                    <p className="text-sm text-slate-500 font-mono">No analysis history found</p>
+                                    <p className="text-xs text-slate-600 font-mono mt-1">Complete analyses will appear here</p>
+                                </div>
+                            ) : (
+                                <div className="space-y-2">
+                                    {analysisHistory.map((item) => (
+                                        <button
+                                            key={item.id}
+                                            onClick={() => handleHistoryItemClick(item)}
+                                            className="w-full text-left p-3 bg-nexus-950 border border-nexus-800 hover:border-nexus-600 rounded transition-all group"
+                                        >
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div className="flex-1 min-w-0">
+                                                    <p className="text-sm text-slate-300 font-medium group-hover:text-nexus-300 transition-colors line-clamp-2">
+                                                        {item.query}
+                                                    </p>
+                                                    <div className="flex items-center gap-3 mt-2">
+                                                        <span className="text-[10px] text-slate-500 font-mono">
+                                                            {formatDate(item.created_at)}
+                                                        </span>
+                                                        {item.progress?.stats && (
+                                                            <span className="text-[10px] text-slate-600 font-mono">
+                                                                {item.progress.stats.actors + item.progress.stats.policies + item.progress.stats.outcomes + item.progress.stats.risks} entities
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    {item.status === 'complete' && (
+                                                        <CheckCircle className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+                                                    )}
+                                                    {item.status === 'processing' && (
+                                                        <Loader className="w-4 h-4 text-nexus-400 animate-spin flex-shrink-0" />
+                                                    )}
+                                                    {item.status === 'failed' && (
+                                                        <XCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Modal Footer */}
+                        <div className="p-3 border-t border-nexus-800 bg-nexus-950/50 rounded-b-lg">
+                            <p className="text-[10px] text-slate-600 font-mono text-center">
+                                Click any analysis to view its results
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

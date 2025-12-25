@@ -93,7 +93,7 @@ export interface QueryExpansionResponse {
  * Create a new analysis
  */
 export async function createAnalysis(params: CreateAnalysisParams): Promise<AnalysisResponse> {
-    const response = await fetch(`${API_URL}/api/analysis`, {
+    const response = await fetch(`${API_URL}/api/analysis/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(params),
@@ -114,6 +114,28 @@ export async function getAnalysis(id: string): Promise<AnalysisResponse> {
 
     if (!response.ok) {
         throw new Error(`Failed to get analysis: ${response.statusText}`);
+    }
+
+    return response.json();
+}
+
+/**
+ * List all analyses (for history)
+ */
+export async function listAnalyses(options?: {
+    limit?: number;
+    offset?: number;
+    status?: string;
+}): Promise<AnalysisResponse[]> {
+    const params = new URLSearchParams();
+    if (options?.limit) params.append('limit', options.limit.toString());
+    if (options?.offset) params.append('offset', options.offset.toString());
+    if (options?.status) params.append('status', options.status);
+
+    const response = await fetch(`${API_URL}/api/analysis?${params.toString()}`);
+
+    if (!response.ok) {
+        throw new Error(`Failed to list analyses: ${response.statusText}`);
     }
 
     return response.json();

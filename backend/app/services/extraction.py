@@ -19,6 +19,11 @@ from app.prompts import (
 logger = logging.getLogger(__name__)
 
 
+class ExtractionError(Exception):
+    """Raised when entity extraction fails."""
+    pass
+
+
 class ExtractionService:
     """
     Multi-pass APOR entity extraction service.
@@ -96,23 +101,27 @@ class ExtractionService:
     async def _extract_type(self, text: str, entity_type: str, prompt: str) -> List[Dict]:
         """Extract entities of one type from text."""
         formatted_prompt = prompt.format(text=text)
-        
+
         try:
             # Prepend system prompt to the user prompt since complete() doesn't accept system_prompt
             full_prompt = f"{EXTRACTION_SYSTEM_PROMPT}\n\n{formatted_prompt}"
             result = await self.llm.complete(
                 prompt=full_prompt,
                 schema=ENTITY_SCHEMA,
-                temperature=0.1  # Low temperature for extraction
+                temperature=0.1,  # Low temperature for extraction
+                max_tokens=8000  # Increase for longer JSON responses
             )
-            
+
             if isinstance(result, dict) and "entities" in result:
                 return result["entities"]
             return []
-            
+
         except Exception as e:
-            logger.error(f"Failed to extract {entity_type}: {e}")
-            return []
+            # Don't silently fail - this is a critical error that should stop the pipeline
+            error_msg = f"Failed to extract {entity_type}: {e}"
+            logger.error(error_msg)
+            # Re-raise to stop the pipeline - empty results should not be considered success
+            raise ExtractionError(error_msg) from e
     
     async def _extract_relationships(self, text: str, entities: List[Dict]) -> List[Dict]:
         """Extract relationships between found entities."""
@@ -121,25 +130,26 @@ class ExtractionService:
             f"- {e['label']} ({e['type']})"
             for e in entities
         ])
-        
+
         formatted_prompt = EXTRACT_RELATIONSHIPS_PROMPT.format(
             text=text,
             entities=entities_text
         )
-        
+
         try:
             # Prepend system prompt to the user prompt since complete() doesn't accept system_prompt
             full_prompt = f"{EXTRACTION_SYSTEM_PROMPT}\n\n{formatted_prompt}"
             result = await self.llm.complete(
                 prompt=full_prompt,
                 schema=RELATIONSHIP_SCHEMA,
-                temperature=0.1
+                temperature=0.1,
+                max_tokens=8000  # Increase for longer JSON responses
             )
-            
+
             if isinstance(result, dict) and "relationships" in result:
                 return result["relationships"]
             return []
-            
+
         except Exception as e:
             logger.error(f"Failed to extract relationships: {e}")
             return []

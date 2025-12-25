@@ -6,10 +6,10 @@ import asyncio
 import logging
 from uuid import UUID, uuid4
 from datetime import datetime
-from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from typing import Optional, List
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from app.api.deps import get_db
 from app.models.schemas import (
@@ -112,6 +112,58 @@ async def run_analysis_pipeline_task(analysis_id: str):
         await run_pipeline(analysis_id, async_session_maker)
     except Exception as e:
         logger.error(f"Pipeline task failed for {analysis_id}: {e}")
+
+
+@router.get("", response_model=List[AnalysisResponse])
+async def list_analyses(
+    limit: int = Query(20, ge=1, le=100, description="Maximum number of analyses to return"),
+    offset: int = Query(0, ge=0, description="Number of analyses to skip"),
+    status: Optional[str] = Query(None, description="Filter by status (e.g., 'complete', 'processing', 'failed')"),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    List all analysis jobs with pagination and optional status filtering.
+    Returns most recent analyses first.
+    """
+    query = select(AnalysisJob).order_by(AnalysisJob.created_at.desc())
+
+    # Apply status filter if provided
+    if status:
+        query = query.where(AnalysisJob.status == status)
+
+    # Apply pagination
+    query = query.offset(offset).limit(limit)
+
+    result = await db.execute(query)
+    analyses = result.scalars().all()
+
+    # Convert to response format
+    responses = []
+    for analysis in analyses:
+        counts = analysis.entities_count or {}
+        responses.append(
+            AnalysisResponse(
+                id=analysis.id,
+                query=analysis.query,
+                status=analysis.status,
+                depth=analysis.depth or "standard",
+                current_stage=analysis.current_stage,
+                progress=AnalysisProgress(
+                    stage=analysis.current_stage or "unknown",
+                    percent=_stage_to_percent(analysis.current_stage),
+                    stats=APORCounts(
+                        actors=counts.get("actors", 0),
+                        policies=counts.get("policies", 0),
+                        outcomes=counts.get("outcomes", 0),
+                        risks=counts.get("risks", 0)
+                    )
+                ),
+                created_at=analysis.created_at,
+                completed_at=analysis.completed_at
+            )
+        )
+
+    return responses
 
 
 @router.get("/{analysis_id}", response_model=AnalysisResponse)

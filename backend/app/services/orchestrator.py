@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy import select, update
 
 from app.models.database import AnalysisJob, Chunk, Entity, EntityProvenance, Relationship, Document
-from app.services.extraction import ExtractionService
+from app.services.extraction import ExtractionService, ExtractionError
 from app.services.events import emit_event
 from app.api.deps import get_llm_client, get_embedding_client
 
@@ -146,9 +146,23 @@ class AnalysisPipeline:
                 .order_by(Chunk.sequence)
             )
             chunks = result.scalars().all()
-            
+
+            if not chunks:
+                logger.warning(f"No chunks to extract from for analysis {self.analysis_id}")
+                return
+
             total_counts = {"actors": 0, "policies": 0, "outcomes": 0, "risks": 0}
-            
+            consecutive_failures = 0
+            max_consecutive_failures = 3  # Fail fast if too many consecutive LLM errors
+
+            # Map entity type to count key (handle irregular plurals)
+            type_to_count_key = {
+                "actor": "actors",
+                "policy": "policies",
+                "outcome": "outcomes",
+                "risk": "risks"
+            }
+
             for i, chunk in enumerate(chunks):
                 try:
                     # Extract entities from chunk
@@ -156,10 +170,13 @@ class AnalysisPipeline:
                         chunk.content,
                         str(chunk.id)
                     )
-                    
+
+                    # Reset consecutive failures on success
+                    consecutive_failures = 0
+
                     # Store entities
                     entity_id_map = {}  # temp_id -> real_id
-                    
+
                     for entity_data in extraction_result.get("entities", []):
                         entity = Entity(
                             analysis_id=self.analysis_id,
@@ -173,10 +190,11 @@ class AnalysisPipeline:
                         )
                         db.add(entity)
                         await db.flush()
-                        
+
                         entity_id_map[entity_data["temp_id"]] = entity.id
-                        total_counts[entity_data["type"] + "s"] += 1
-                        
+                        count_key = type_to_count_key.get(entity_data["type"], entity_data["type"] + "s")
+                        total_counts[count_key] += 1
+
                         # Add provenance
                         provenance = EntityProvenance(
                             entity_id=entity.id,
@@ -185,8 +203,8 @@ class AnalysisPipeline:
                             confidence=entity_data.get("confidence", 50)
                         )
                         db.add(provenance)
-                    
-                    # Store relationships  
+
+                    # Store relationships
                     for rel_data in extraction_result.get("relationships", []):
                         # Find entity IDs by label
                         source_entity = await self._find_entity_by_label(
@@ -195,7 +213,7 @@ class AnalysisPipeline:
                         target_entity = await self._find_entity_by_label(
                             db, rel_data["target"]
                         )
-                        
+
                         if source_entity and target_entity:
                             relationship = Relationship(
                                 analysis_id=self.analysis_id,
@@ -205,25 +223,39 @@ class AnalysisPipeline:
                                 confidence=rel_data.get("confidence", 50)
                             )
                             db.add(relationship)
-                    
+
                     # Mark chunk as processed
                     chunk.extraction_status = "complete"
                     chunk.extraction_result = extraction_result
-                    
+
                     await db.commit()
-                    
+
                     # Emit progress
                     percent = 30 + int((i + 1) / len(chunks) * 60)
                     await self._emit("stats_update", {
                         "stats": total_counts,
                         "percent": percent
                     })
-                    
-                except Exception as e:
-                    logger.error(f"Extraction failed for chunk {chunk.id}: {e}")
+
+                except ExtractionError as e:
+                    # ExtractionError indicates a real LLM failure (quota, auth, etc.)
+                    # These should fail the entire analysis
+                    consecutive_failures += 1
+                    logger.error(f"LLM extraction failed for chunk {chunk.id}: {e}")
                     chunk.extraction_status = "failed"
                     await db.commit()
-            
+
+                    # Fail fast if too many consecutive LLM errors
+                    if consecutive_failures >= max_consecutive_failures:
+                        error_msg = f"LLM extraction failed consistently (quota/network error). Please check your API configuration: {e}"
+                        raise ExtractionError(error_msg) from e
+
+                except Exception as e:
+                    # Other exceptions are logged but don't fail the entire analysis
+                    logger.error(f"Unexpected error extracting chunk {chunk.id}: {e}")
+                    chunk.extraction_status = "failed"
+                    await db.commit()
+
             # Update analysis entity counts
             await db.execute(
                 update(AnalysisJob)
@@ -231,6 +263,13 @@ class AnalysisPipeline:
                 .values(entities_count=total_counts)
             )
             await db.commit()
+
+            # Log summary
+            total_entities = sum(total_counts.values())
+            if total_entities == 0:
+                logger.warning(f"Extraction completed but no entities found for analysis {self.analysis_id}")
+            else:
+                logger.info(f"Extraction completed: {total_entities} entities extracted")
     
     async def _find_entity_by_label(
         self, 
