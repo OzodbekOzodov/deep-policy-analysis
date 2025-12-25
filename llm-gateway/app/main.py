@@ -17,16 +17,28 @@ from app.config import settings
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Configure Gemini
-genai.configure(api_key=settings.gemini_api_key)
+# Initialize clients based on provider
+openai_client: Optional[AsyncOpenAI] = None
+gemini_configured: bool = False
 
-# Configure OpenAI (lazy initialization potential, but client is lightweight)
-openai_client = None
-if settings.openai_api_key:
+# Configure Gemini if using Gemini
+if settings.is_gemini or settings.provider == "gemini":
+    genai.configure(api_key=settings.api_key)
+    gemini_configured = True
+    logger.info(f"Configured Gemini provider with model: {settings.default_model or settings.gemini_default_model}")
+
+# Configure OpenAI-compatible client if using OpenAI-compatible provider
+if settings.is_openai_compatible:
     openai_client = AsyncOpenAI(
-        api_key=settings.openai_api_key,
-        base_url=settings.openai_base_url
+        api_key=settings.api_key,
+        base_url=settings.base_url,
+        # Add default headers required by OpenRouter
+        default_headers={
+            "HTTP-Referer": "http://localhost:3000",
+            "X-Title": "Deep Policy Analyst"
+        }
     )
+    logger.info(f"Configured OpenAI-compatible provider ({settings.provider}) with model: {settings.default_model}")
 
 app = FastAPI(title="LLM Gateway Service")
 
@@ -56,11 +68,21 @@ class EmbeddingResponse(BaseModel):
     tokens: int
     latency_ms: int
 
-# Helpers
-def is_gemini_model(model_name: str) -> bool:
-    return "gemini" in model_name.lower()
+# Get the default model based on provider
+def get_default_model() -> str:
+    if settings.default_model:
+        return settings.default_model
+    if settings.provider == "gemini":
+        return settings.gemini_default_model
+    if settings.provider == "openai":
+        return settings.openai_default_model
+    if settings.provider == "anthropic":
+        return settings.anthropic_default_model
+    if settings.provider == "openrouter":
+        return "openai/gpt-oss-120b:free"
+    return settings.gemini_default_model
 
-# Logic
+# Gemini generation
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=1, max=4),
@@ -72,38 +94,35 @@ def is_gemini_model(model_name: str) -> bool:
 )
 async def generate_gemini(request: CompletionRequest, request_id: str) -> CompletionResponse:
     start_time = time.perf_counter()
-    model_name = request.model or settings.default_model
-    
+    model_name = request.model or get_default_model()
+
     generation_config = {
         "temperature": request.temperature,
         "max_output_tokens": request.max_tokens,
     }
-    
+
     if request.schema:
         generation_config["response_mime_type"] = "application/json"
         generation_config["response_schema"] = request.schema
-        
+
     model = genai.GenerativeModel(model_name)
-    
-    # Construct prompt. Task + Prompt usually.
+
     full_prompt = f"Task: {request.task}\n\n{request.prompt}"
-    
+
     try:
         response = await model.generate_content_async(
             full_prompt,
             generation_config=generation_config
         )
-        
+
         latency = int((time.perf_counter() - start_time) * 1000)
-        
-        # Token usage estimation (Gemini API provides usage_metadata access)
-        # Note: python client 0.8.0 access might vary, usually response.usage_metadata
+
         input_tokens = 0
         output_tokens = 0
         if hasattr(response, "usage_metadata"):
              input_tokens = response.usage_metadata.prompt_token_count
              output_tokens = response.usage_metadata.candidates_token_count
-        
+
         content = response.text
         if request.schema:
              import json
@@ -111,8 +130,6 @@ async def generate_gemini(request: CompletionRequest, request_id: str) -> Comple
                  content = json.loads(content)
              except json.JSONDecodeError:
                  logger.error(f"Failed to decode JSON from Gemini: {content}")
-                 # Fallback to string if parsing fails, or could raise error
-                 pass
 
         return CompletionResponse(
             content=content,
@@ -121,63 +138,79 @@ async def generate_gemini(request: CompletionRequest, request_id: str) -> Comple
             latency_ms=latency,
             request_id=request_id
         )
-        
+
     except Exception as e:
         logger.error(f"Gemini generation failed: {e}")
         raise HTTPException(status_code=500, detail=f"Gemini Error: {str(e)}")
 
-# Logic
-async def generate_openai_compatible(request: CompletionRequest, request_id: str) -> CompletionResponse:
-    if not openai_client:
-         raise HTTPException(
-             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-             detail="OpenAI/Compatible provider is not configured (missing API key)."
-         )
-    return await _generate_openai_compatible_impl(request, request_id)
-
+# OpenAI-compatible generation
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=1, max=4),
     reraise=True
 )
-async def _generate_openai_compatible_impl(request: CompletionRequest, request_id: str) -> CompletionResponse:
+async def generate_openai_compatible(request: CompletionRequest, request_id: str) -> CompletionResponse:
+    if not openai_client:
+         raise HTTPException(
+             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+             detail="OpenAI-compatible provider is not configured."
+         )
+
     start_time = time.perf_counter()
-    model_name = request.model 
-    if not model_name:
-         raise HTTPException(status_code=400, detail="Model name required for non-Gemini providers")
+    model_name = request.model or get_default_model()
 
     messages = [
         {"role": "system", "content": request.task},
         {"role": "user", "content": request.prompt}
     ]
-    
+
+    # Build extra body for OpenRouter-specific features
+    extra_body = {}
+    if settings.provider == "openrouter":
+        # Enable reasoning for o1 models that support it
+        if "o1" in model_name.lower() or "gpt-oss" in model_name.lower():
+            extra_body["reasoning"] = {"enabled": True}
+
     params = {
         "model": model_name,
         "messages": messages,
         "temperature": request.temperature,
         "max_tokens": request.max_tokens,
     }
-    
-    if request.schema:
+
+    # Only use JSON mode for providers that support it (not all custom providers)
+    if request.schema and settings.provider != "custom":
         params["response_format"] = {"type": "json_object"}
         messages[-1]["content"] += "\n\nPlease respond in JSON matching the schema."
-    
+    elif request.schema:
+        # For custom providers, just ask for JSON in the prompt
+        messages[-1]["content"] += "\n\nPlease respond in valid JSON format matching the schema."
+
     try:
-        response = await openai_client.chat.completions.create(**params)
+        response = await openai_client.chat.completions.create(
+            **params,
+            extra_body=extra_body if extra_body else None
+        )
         latency = int((time.perf_counter() - start_time) * 1000)
-        
+
         resp_content = response.choices[0].message.content
         input_tokens = response.usage.prompt_tokens
         output_tokens = response.usage.completion_tokens
-        
+
         content = resp_content
         if request.schema:
              import json
              try:
-                 content = json.loads(content)
-             except json.JSONDecodeError:
-                 logger.error("Failed to decode JSON from OpenAI provider")
-                 pass
+                 # Some providers return None when JSON mode is requested but not supported
+                 if content is None:
+                     logger.warning("Provider returned None content for JSON request, using empty dict")
+                     content = {}
+                 else:
+                     content = json.loads(content)
+             except (json.JSONDecodeError, TypeError) as e:
+                 logger.error(f"Failed to decode JSON from OpenAI provider: {e}, content was: {repr(content)[:200]}")
+                 # Return empty dict instead of failing
+                 content = {}
 
         return CompletionResponse(
             content=content,
@@ -189,7 +222,9 @@ async def _generate_openai_compatible_impl(request: CompletionRequest, request_i
 
     except Exception as e:
         logger.error(f"OpenAI compatible generation failed: {e}")
-        # Re-raise generic exceptions to trigger retry
+        # Log the full error for debugging
+        import traceback
+        logger.error(traceback.format_exc())
         raise
 
 # Endpoints
@@ -197,53 +232,52 @@ async def _generate_openai_compatible_impl(request: CompletionRequest, request_i
 @app.get("/health")
 async def health():
     return {
-        "status": "ok", 
-        "provider": "gemini", 
-        "openai_compatible": bool(openai_client)
+        "status": "ok",
+        "provider": settings.provider,
+        "model": get_default_model(),
+        "openai_client_active": openai_client is not None
     }
 
 @app.post("/v1/complete", response_model=CompletionResponse)
 async def complete(request: CompletionRequest):
     request_id = str(uuid.uuid4())
-    model = request.model or settings.default_model
-    
-    if is_gemini_model(model):
+    logger.info(f"Complete request: task='{request.task[:50]}...' model='{request.model or get_default_model()}' provider='{settings.provider}'")
+
+    # Route based on provider
+    if settings.is_gemini or (not openai_client and settings.provider == "gemini"):
         return await generate_gemini(request, request_id)
     else:
         return await generate_openai_compatible(request, request_id)
 
 @app.post("/v1/embed", response_model=EmbeddingResponse)
 async def embed(request: EmbeddingRequest):
-    # Only supporting Gemini embeddings as per spec for now
-    # Could expand later
     start_time = time.perf_counter()
     model_name = request.model or settings.embedding_model
-    
-    # Gemini embedding
+
+    # Use Gemini for embeddings (can be extended to support other providers)
     try:
-        # batch processing
+        # Configure Gemini for embeddings if needed
+        embedding_key = settings.embedding_api_key or settings.api_key
+        if not gemini_configured or (settings.embedding_api_key and settings.embedding_api_key != settings.api_key):
+            genai.configure(api_key=embedding_key)
+
         result = genai.embed_content(
             model=model_name,
             content=request.texts,
-            task_type="retrieval_document" # Defaulting for general use
+            task_type="retrieval_document"
         )
-        
-        # Result dict usually has 'embedding' key which is list of list if input is list
+
         embeddings = result['embedding']
-        
         latency = int((time.perf_counter() - start_time) * 1000)
-        
-        # Token counting for embeddings is not always strictly returned in the same way
-        # Rough estimate or 0 if unavailable
-        tokens = 0 
-        
+        tokens = 0
+
         return EmbeddingResponse(
              embeddings=embeddings,
              model_used=model_name,
              tokens=tokens,
              latency_ms=latency
         )
-        
+
     except Exception as e:
         logger.error(f"Embedding failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
