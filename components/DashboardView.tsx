@@ -159,7 +159,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({
                         </button>
                         <h1 className="text-xl font-mono font-bold tracking-tighter text-white flex items-center gap-2">
                             <Cpu className="text-nexus-accent animate-pulse-fast w-5 h-5" />
-                            NEXUS
+                            EAGLE EYE
                         </h1>
                     </div>
                     <p className="text-[10px] text-slate-500 font-mono pl-9">v2.5.0 HYPER-ANALYTICAL ENGINE</p>
