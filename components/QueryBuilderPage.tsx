@@ -127,7 +127,7 @@ const QueryBuilderPage: React.FC<QueryBuilderPageProps> = ({ onStart, history })
                         <Cpu className="w-5 h-5" />
                     </div>
                     <div>
-                        <h1 className="text-xl font-mono font-bold tracking-tighter text-white">NEXUS</h1>
+                        <h1 className="text-xl font-mono font-bold tracking-tighter text-white">EAGLE EYE</h1>
                         <p className="text-[10px] text-slate-500 font-mono tracking-widest">v2.5.0 DEEP ANALYSIS PLATFORM</p>
                     </div>
                 </div>

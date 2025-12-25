@@ -209,7 +209,7 @@ function App() {
       });
 
       if (isMounted.current) {
-        addLog('NEXUS_CORE', 'GENERATING_GRAPH', 'Node synthesis complete', 'simulating');
+        addLog('EAGLE_EYE_CORE', 'GENERATING_GRAPH', 'Node synthesis complete', 'simulating');
         setState(AnalysisState.SIMULATING);
       }
 

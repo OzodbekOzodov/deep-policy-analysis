@@ -18,7 +18,7 @@ export const analyzePolicyScenario = async (prompt: string): Promise<SimulationD
   const currentIso = today.toISOString().split('T')[0];
 
   const systemInstruction = `
-    You are NEXUS, a superintelligence designed for high-dimensional political and economic analysis.
+    You are EAGLE EYE, a superintelligence designed for high-dimensional political and economic analysis.
     Your task is to take a user query (a political topic, policy, or region) and generate a complex graph of interconnected nodes representing the systemic implications (APOR Model: Actor, Policy, Outcome, Risk).
     
     CRITICAL: You must return valid JSON that exactly matches the requested schema.
