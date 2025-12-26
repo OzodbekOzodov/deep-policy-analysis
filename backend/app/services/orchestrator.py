@@ -14,6 +14,7 @@ from sqlalchemy import select, update
 from app.models.database import AnalysisJob, Chunk, Entity, EntityProvenance, Relationship, Document
 from app.services.extraction import ExtractionService, ExtractionError
 from app.services.events import emit_event
+from app.services.resolution import ResolutionService
 from app.api.deps import get_llm_client, get_embedding_client
 
 logger = logging.getLogger(__name__)
@@ -25,13 +26,15 @@ class AnalysisPipeline:
     1. Search - Search knowledge base for relevant chunks
     2. Ingestion - Verify documents and chunks exist
     3. Extraction - Extract APOR entities from each chunk
-    4. Complete - Mark analysis as done
+    4. Resolution - Deduplicate entities and remap relationships
+    5. Complete - Mark analysis as done
     """
 
     def __init__(self, analysis_id: UUID, session_maker: async_sessionmaker):
         self.analysis_id = analysis_id
         self.session_maker = session_maker
         self.extraction = ExtractionService(get_llm_client())
+        self.resolution = ResolutionService(get_llm_client())
         self.embedding_client = get_embedding_client()
     
     async def run(self) -> None:
@@ -48,6 +51,10 @@ class AnalysisPipeline:
             await self._update_status("processing", "extracting")
             await self._emit("stage_change", {"stage": "extracting", "percent": 30})
             await self._run_extraction()
+
+            await self._update_status("processing", "resolving")
+            await self._emit("stage_change", {"stage": "resolving", "percent": 90})
+            await self._run_resolution()
 
             await self._update_status("complete", "complete")
             await self._emit("stage_change", {"stage": "complete", "percent": 100})
@@ -270,7 +277,33 @@ class AnalysisPipeline:
                 logger.warning(f"Extraction completed but no entities found for analysis {self.analysis_id}")
             else:
                 logger.info(f"Extraction completed: {total_entities} entities extracted")
-    
+
+    async def _run_resolution(self) -> None:
+        """Resolve duplicate entities and remap relationships."""
+        async with self.session_maker() as db:
+            logger.info(f"Running entity resolution for analysis {self.analysis_id}")
+
+            try:
+                merge_stats = await self.resolution.resolve_entities(
+                    analysis_id=self.analysis_id,
+                    db=db,
+                    use_llm=True,
+                    min_confidence=60,
+                )
+
+                # Emit merge statistics
+                await self._emit("merge_complete", merge_stats.to_dict())
+
+                logger.info(
+                    f"Resolution complete: {merge_stats.total_entities} -> {merge_stats.unique_entities} entities, "
+                    f"{merge_stats.relationships_removed} relationships removed"
+                )
+
+            except Exception as e:
+                logger.error(f"Entity resolution failed: {e}")
+                # Don't fail the entire analysis on resolution errors
+                await self._emit("merge_error", {"error": str(e)})
+
     async def _find_entity_by_label(
         self, 
         db: AsyncSession, 

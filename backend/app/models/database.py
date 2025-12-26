@@ -52,6 +52,7 @@ class AnalysisJob(Base):
     relationships = relationship("Relationship", back_populates="analysis", cascade="all, delete-orphan")
     checkpoints = relationship("Checkpoint", back_populates="analysis", cascade="all, delete-orphan")
     progress_events = relationship("ProgressEvent", back_populates="analysis", cascade="all, delete-orphan")
+    merge_logs = relationship("EntityMergeLog", cascade="all, delete-orphan")
 
 
 class Source(Base):
@@ -243,4 +244,18 @@ class QueryExpansion(Base):
     original_query = Column(Text, nullable=False)
     query_hash = Column(String(64), nullable=False, unique=True)
     expansions = Column(JSONB, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class EntityMergeLog(Base):
+    """Audit trail for entity merge operations."""
+    __tablename__ = "entity_merge_log"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    analysis_id = Column(UUID(as_uuid=True), ForeignKey("analysis_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    primary_entity_id = Column(UUID(as_uuid=True), nullable=True)
+    merged_entity_ids = Column(JSONB, nullable=False)  # Array of merged entity UUIDs
+    merge_method = Column(String(50), nullable=False)  # 'alias_dict', 'exact_match', 'llm_batch'
+    confidence = Column(Integer, nullable=True)  # Merge confidence 0-100
+    canonical_label = Column(String(500), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
