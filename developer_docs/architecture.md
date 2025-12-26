@@ -708,7 +708,7 @@ cd frontend && npm run dev
 # 8. Verify
 curl http://localhost:8000/health  # Backend
 curl http://localhost:8001/health  # LLM Gateway
-open http://localhost:5173         # Frontend
+open http://localhost:3000         # Frontend
 ```
 
 ### 10. Key Dependencies

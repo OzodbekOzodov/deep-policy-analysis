@@ -24,7 +24,7 @@ Run the following bash script to start all services:
 `./dev.sh`
 
 Output URLs:
-* Frontend: http://localhost:5173
+* Frontend: http://localhost:3000
 * Backend: http://localhost:8000
 * LLM Gateway: http://localhost:8001
 * API Docs: http://localhost:8000/docs
