@@ -259,3 +259,22 @@ class EntityMergeLog(Base):
     confidence = Column(Integer, nullable=True)  # Merge confidence 0-100
     canonical_label = Column(String(500), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class SummaryCache(Base):
+    """Cache for generated entity analysis summaries."""
+    __tablename__ = "summary_cache"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    cache_key = Column(String(64), nullable=False, unique=True, index=True)
+    entity_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    analysis_id = Column(UUID(as_uuid=True), ForeignKey("analysis_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    config_hash = Column(String(64), nullable=False, index=True)  # Hash of selected_types
+    summary = Column(Text, nullable=False)
+    citations = Column(JSONB, nullable=False)  # List of citation objects
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Index for looking up by entity + config
+    __table_args__ = (
+        Index("ix_summary_cache_entity_config", "entity_id", "config_hash"),
+    )

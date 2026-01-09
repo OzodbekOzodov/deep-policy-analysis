@@ -263,3 +263,142 @@ class ProgressEvent(BaseModel):
 class HealthResponse(BaseModel):
     """Health check response."""
     status: str = "ok"
+
+
+# ===== Entity Detail & Analysis Summary Schemas =====
+
+
+class ConnectedEntityInfo(BaseModel):
+    """Information about a connected entity."""
+    id: UUID
+    label: str
+    type: Literal["actor", "policy", "outcome", "risk"]
+    relationship_type: str
+    confidence: int = Field(default=50, ge=0, le=100)
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "id": "123e4567-e89b-12d3-a456-426614174000",
+                "label": "Environmental Protection Agency",
+                "type": "actor",
+                "relationship_type": "implements",
+                "confidence": 85
+            }
+        }
+    )
+
+
+class EntityConnectionsByType(BaseModel):
+    """Connections grouped by entity type."""
+    count: int = Field(default=0, ge=0)
+    entities: list[ConnectedEntityInfo] = Field(default_factory=list)
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "count": 5,
+                "entities": []
+            }
+        }
+    )
+
+
+class EntityConnectionsResponse(BaseModel):
+    """Entity connections response."""
+    entity_id: UUID
+    entity_label: str
+    entity_type: Literal["actor", "policy", "outcome", "risk"]
+    connections: dict[str, EntityConnectionsByType] = Field(
+        default_factory=lambda: {
+            "actors": EntityConnectionsByType(),
+            "policies": EntityConnectionsByType(),
+            "outcomes": EntityConnectionsByType(),
+            "risks": EntityConnectionsByType(),
+        }
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "entity_id": "123e4567-e89b-12d3-a456-426614174000",
+                "entity_label": "Ministry of Defense",
+                "entity_type": "actor",
+                "connections": {
+                    "actors": {"count": 5, "entities": []},
+                    "policies": {"count": 3, "entities": []},
+                    "outcomes": {"count": 2, "entities": []},
+                    "risks": {"count": 4, "entities": []}
+                }
+            }
+        }
+    )
+
+
+class AnalysisSummaryRequest(BaseModel):
+    """Request to generate analysis summary for an entity."""
+    selected_types: list[Literal["actor", "policy", "outcome", "risk"]] = Field(
+        ..., description="APOR types to include in summary"
+    )
+    analysis_id: UUID = Field(..., description="Analysis job ID")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "selected_types": ["actors", "risks", "outcomes"],
+                "analysis_id": "123e4567-e89b-12d3-a456-426614174000"
+            }
+        }
+    )
+
+    @field_validator("selected_types")
+    @classmethod
+    def validate_selected_types(cls, v: list) -> list:
+        """Ensure at least one type is selected."""
+        if not v or len(v) == 0:
+            raise ValueError("At least one type must be selected for summary generation")
+        return v
+
+
+class CitationItem(BaseModel):
+    """Citation with source information."""
+    id: int
+    text: str = Field(..., description="Chunk text excerpt")
+    chunk_id: UUID
+    document_title: Optional[str] = None
+    relationship: str = Field(..., description="Relationship or entity mention type")
+    confidence: int = Field(default=50, ge=0, le=100)
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "id": 1,
+                "text": "The Ministry of Defense is responsible for national cybersecurity...",
+                "chunk_id": "123e4567-e89b-12d3-a456-426614174000",
+                "document_title": "National Security Strategy 2024",
+                "relationship": "entity_mention",
+                "confidence": 85
+            }
+        }
+    )
+
+
+class AnalysisSummaryResponse(BaseModel):
+    """Analysis summary response."""
+    entity_id: UUID
+    entity_label: str
+    summary: str = Field(..., description="Generated analytical summary with citation markers")
+    citations: list[CitationItem] = Field(default_factory=list)
+    cache_key: str = Field(..., description="Hash for client-side caching")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "entity_id": "123e4567-e89b-12d3-a456-426614174000",
+                "entity_label": "Ministry of Defense",
+                "summary": "The Ministry of Defense [1] has implemented the Cybersecurity Act [2]...",
+                "citations": [],
+                "cache_key": "abc123def456"
+            }
+        }
+    )

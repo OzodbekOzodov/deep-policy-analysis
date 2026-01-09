@@ -69,3 +69,67 @@ export interface AnalysisConfig {
     resolver: boolean;
   };
 }
+
+// ===== Entity Connections & Analysis Summary Types =====
+
+export interface ConnectedEntityInfo {
+  id: string;
+  label: string;
+  type: 'actor' | 'policy' | 'outcome' | 'risk';
+  relationship_type: string;
+  confidence: number;
+}
+
+export interface EntityConnectionsByType {
+  count: number;
+  entities: ConnectedEntityInfo[];
+}
+
+export interface EntityConnectionsResponse {
+  entity_id: string;
+  entity_label: string;
+  entity_type: 'actor' | 'policy' | 'outcome' | 'risk';
+  connections: {
+    actors: EntityConnectionsByType;
+    policies: EntityConnectionsByType;
+    outcomes: EntityConnectionsByType;
+    risks: EntityConnectionsByType;
+  };
+}
+
+export interface AnalysisSummaryRequest {
+  selected_types: ('actor' | 'policy' | 'outcome' | 'risk')[];
+  analysis_id: string;
+}
+
+export interface CitationItem {
+  id: number;
+  text: string;
+  chunk_id: string;
+  document_title: string | null;
+  relationship: string;
+  confidence: number;
+}
+
+export interface AnalysisSummaryResponse {
+  entity_id: string;
+  entity_label: string;
+  summary: string;
+  citations: CitationItem[];
+  cache_key: string;
+}
+
+export interface EntityProvenanceDetail {
+  chunk_id: string;
+  quote: string;
+  confidence: number;
+  chunk_content: string;
+  document_title: string;
+  document_id: string;
+}
+
+export interface EntityProvenanceResponse {
+  entity_id: string;
+  entity_label: string;
+  provenance: EntityProvenanceDetail[];
+}

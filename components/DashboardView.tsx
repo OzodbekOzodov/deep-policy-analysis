@@ -26,6 +26,7 @@ interface DashboardViewProps {
     logs: AgentLog[];
     onBack: () => void;
     onRefresh: () => void;
+    analysisId?: string | null;
 }
 
 const DashboardView: React.FC<DashboardViewProps> = ({
@@ -35,7 +36,8 @@ const DashboardView: React.FC<DashboardViewProps> = ({
     state,
     logs,
     onBack,
-    onRefresh
+    onRefresh,
+    analysisId
 }) => {
     const [selectedNode, setSelectedNode] = useState<PolicyNode | null>(null);
     const [containerDimensions, setContainerDimensions] = useState({ width: 800, height: 600 });
@@ -300,7 +302,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({
                     {/* Right Panel: Context Aware (Simulation Overview OR Entity Detail) */}
                     <div className="w-96 border-l border-nexus-800 bg-nexus-950/50 flex flex-col z-10 backdrop-blur-sm transition-all duration-300">
                         {selectedNode ? (
-                            <EntityDetailPanel node={selectedNode} onClose={closeDetailPanel} />
+                            <EntityDetailPanel node={selectedNode} onClose={closeDetailPanel} analysisId={analysisId ?? undefined} />
                         ) : (
                             <>
                                 {/* REASONING LOG (Replaces SimulationCharts) */}

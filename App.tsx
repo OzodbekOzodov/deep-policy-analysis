@@ -320,6 +320,7 @@ function App() {
           logs={logs}
           onBack={handleBack}
           onRefresh={handleRefresh}
+          analysisId={currentAnalysisId}
         />
       )}
     </>

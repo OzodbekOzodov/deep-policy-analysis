@@ -1,17 +1,89 @@
 
-import React, { useState } from 'react';
-import { PolicyNode } from '../types';
+import React, { useState, useEffect } from 'react';
+import { PolicyNode, EntityConnectionsResponse, AnalysisSummaryResponse } from '../types';
 import { X, ShieldAlert, Users, FileText, Activity, Lock, ExternalLink, Calendar, ChevronDown, ChevronRight, BarChart } from 'lucide-react';
 import TypewriterText from './TypewriterText';
+import ConnectionsDisplay from './ConnectionsDisplay';
+import SummaryConfigPanel from './SummaryConfigPanel';
+import AnalysisSummary from './AnalysisSummary';
 
 interface EntityDetailPanelProps {
   node: PolicyNode | null;
   onClose: () => void;
+  analysisId?: string;
 }
 
-const EntityDetailPanel: React.FC<EntityDetailPanelProps> = ({ node, onClose }) => {
+const EntityDetailPanel: React.FC<EntityDetailPanelProps> = ({ node, onClose, analysisId }) => {
   const [sourcesExpanded, setSourcesExpanded] = useState(false);
-  
+  const [connections, setConnections] = useState<EntityConnectionsResponse | null>(null);
+  const [generatedSummary, setGeneratedSummary] = useState<AnalysisSummaryResponse | null>(null);
+  const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
+  const [isLoadingConnections, setIsLoadingConnections] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Fetch connections when node changes
+  useEffect(() => {
+    if (!node) {
+      setConnections(null);
+      setGeneratedSummary(null);
+      setError(null);
+      return;
+    }
+
+    const fetchConnections = async () => {
+      setIsLoadingConnections(true);
+      setError(null);
+
+      try {
+        const response = await fetch(`http://localhost:8000/api/entities/${node.id}/connections`);
+        if (!response.ok) {
+          throw new Error('Failed to fetch connections');
+        }
+        const data: EntityConnectionsResponse = await response.json();
+        setConnections(data);
+      } catch (err) {
+        console.error('Error fetching connections:', err);
+        setError('Failed to load connections');
+      } finally {
+        setIsLoadingConnections(false);
+      }
+    };
+
+    fetchConnections();
+  }, [node]);
+
+  const handleGenerateSummary = async (selectedTypes: Array<'actor' | 'policy' | 'outcome' | 'risk'>) => {
+    if (!node || !analysisId) return;
+
+    setIsGeneratingSummary(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`http://localhost:8000/api/entities/${node.id}/summary`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          selected_types: selectedTypes,
+          analysis_id: analysisId,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to generate summary');
+      }
+
+      const data: AnalysisSummaryResponse = await response.json();
+      setGeneratedSummary(data);
+    } catch (err) {
+      console.error('Error generating summary:', err);
+      setError('Failed to generate summary');
+    } finally {
+      setIsGeneratingSummary(false);
+    }
+  };
+
   if (!node) return null;
 
   const getTypeIcon = (type: string) => {
@@ -42,7 +114,7 @@ const EntityDetailPanel: React.FC<EntityDetailPanelProps> = ({ node, onClose }) 
 
   return (
     <div className="h-full w-full flex flex-col bg-nexus-950/95 backdrop-blur-xl border-l border-nexus-800 animate-in slide-in-from-right duration-500 relative overflow-hidden shadow-2xl">
-      
+
       {/* Decorative Grid Background */}
       <div className="absolute inset-0 grid-bg opacity-30 pointer-events-none"></div>
 
@@ -61,7 +133,7 @@ const EntityDetailPanel: React.FC<EntityDetailPanelProps> = ({ node, onClose }) 
             </h2>
           </div>
         </div>
-        <button 
+        <button
           onClick={onClose}
           className="p-2 hover:bg-nexus-800 rounded-full transition-colors text-slate-400 hover:text-white"
         >
@@ -71,7 +143,7 @@ const EntityDetailPanel: React.FC<EntityDetailPanelProps> = ({ node, onClose }) 
 
       {/* Content */}
       <div className="flex-1 p-6 overflow-y-auto custom-scrollbar relative z-10">
-        
+
         {/* Confidence & Dates Row */}
         <div className="grid grid-cols-2 gap-4 mb-6">
             <div className="col-span-2 bg-nexus-900/40 border border-nexus-800 p-3 rounded-lg">
@@ -82,13 +154,13 @@ const EntityDetailPanel: React.FC<EntityDetailPanelProps> = ({ node, onClose }) 
                     <span className="text-xs font-mono font-bold text-slate-200">{node.confidence}%</span>
                 </div>
                 <div className="w-full h-1.5 bg-nexus-950 rounded-full overflow-hidden">
-                    <div 
-                        className={`h-full ${getConfidenceColor(node.confidence)} transition-all duration-1000`} 
+                    <div
+                        className={`h-full ${getConfidenceColor(node.confidence)} transition-all duration-1000`}
                         style={{ width: `${node.confidence}%` }}
                     ></div>
                 </div>
             </div>
-            
+
             <div className="bg-nexus-900/40 border border-nexus-800 p-3 rounded-lg flex flex-col justify-center">
                 <span className="text-[10px] text-slate-500 font-mono mb-1 flex items-center gap-1">
                      <Calendar className="w-3 h-3" /> FIRST SEEN
@@ -103,20 +175,58 @@ const EntityDetailPanel: React.FC<EntityDetailPanelProps> = ({ node, onClose }) 
             </div>
         </div>
 
-        {/* The Narrative Report */}
-        <div className="mb-6">
-            <h3 className="text-xs font-mono text-nexus-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                <span className="w-2 h-2 bg-nexus-400 rounded-full animate-pulse"></span>
-                Analysis Summary
-            </h3>
-            <div className="p-5 rounded-xl bg-nexus-900/60 border border-nexus-800 shadow-inner font-mono text-sm leading-relaxed text-slate-300">
-                <TypewriterText text={node.summary || "No intelligence data available for this node."} speed={15} />
+        {/* Connections Display */}
+        {isLoadingConnections ? (
+          <div className="mb-6">
+            <div className="bg-nexus-900/60 border border-nexus-800 rounded-lg p-4">
+              <div className="flex items-center justify-center py-4">
+                <div className="w-6 h-6 border-2 border-nexus-500 border-t-transparent rounded-full animate-spin" />
+              </div>
             </div>
-        </div>
+          </div>
+        ) : connections ? (
+          <ConnectionsDisplay connections={connections} />
+        ) : error ? (
+          <div className="mb-6">
+            <div className="bg-nexus-900/60 border border-red-900/50 rounded-lg p-4">
+              <p className="text-xs text-red-400 font-mono text-center">{error}</p>
+            </div>
+          </div>
+        ) : null}
+
+        {/* Analysis Summary Configuration */}
+        {connections && analysisId && (
+          <SummaryConfigPanel
+            connections={connections}
+            onGenerate={handleGenerateSummary}
+            isGenerating={isGeneratingSummary}
+          />
+        )}
+
+        {/* Generated Analysis Summary */}
+        {(isGeneratingSummary || generatedSummary) && (
+          <AnalysisSummary
+            summary={generatedSummary}
+            isLoading={isGeneratingSummary}
+          />
+        )}
+
+        {/* Original Entity Summary (fallback) */}
+        {!generatedSummary && !isGeneratingSummary && (
+          <div className="mb-6">
+              <h3 className="text-xs font-mono text-nexus-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                  <span className="w-2 h-2 bg-nexus-400 rounded-full animate-pulse"></span>
+                  Entity Summary
+              </h3>
+              <div className="p-5 rounded-xl bg-nexus-900/60 border border-nexus-800 shadow-inner font-mono text-sm leading-relaxed text-slate-300">
+                  <TypewriterText text={node.summary || "No intelligence data available for this node."} speed={15} />
+              </div>
+          </div>
+        )}
 
         {/* Sources Dropdown */}
         <div className="border border-nexus-800 rounded-lg bg-nexus-900/30 overflow-hidden mb-6">
-            <button 
+            <button
                 onClick={() => setSourcesExpanded(!sourcesExpanded)}
                 className="w-full flex items-center justify-between p-3 hover:bg-nexus-800/50 transition-colors"
             >
@@ -126,7 +236,7 @@ const EntityDetailPanel: React.FC<EntityDetailPanelProps> = ({ node, onClose }) 
                 </div>
                 {sourcesExpanded ? <ChevronDown className="w-4 h-4 text-slate-500" /> : <ChevronRight className="w-4 h-4 text-slate-500" />}
             </button>
-            
+
             {sourcesExpanded && (
                 <div className="border-t border-nexus-800 p-3 bg-nexus-950/50">
                     {node.sources && node.sources.length > 0 ? (
@@ -159,7 +269,7 @@ const EntityDetailPanel: React.FC<EntityDetailPanelProps> = ({ node, onClose }) 
                      <span className="text-nexus-accent">{node.impactScore}/100</span>
                  </div>
              </div>
-             
+
              <button className="w-full mt-6 py-2 border border-nexus-500/30 rounded text-nexus-400 font-mono text-xs hover:bg-nexus-500/10 transition-colors flex items-center justify-center gap-2">
                 <ExternalLink className="w-3 h-3" /> OPEN FULL DOSSIER
              </button>

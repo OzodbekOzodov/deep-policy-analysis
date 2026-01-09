@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
-from app.api import analysis, documents, graph, sse, knowledge
+from app.api import analysis, documents, graph, sse, knowledge, entities
 from app.api.deps import get_db
 
 app = FastAPI(
@@ -34,6 +34,7 @@ app.include_router(documents.router)
 app.include_router(graph.router)
 app.include_router(sse.router)
 app.include_router(knowledge.router)
+app.include_router(entities.router)
 
 
 @app.get("/", include_in_schema=False)
